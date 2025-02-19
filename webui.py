@@ -10,16 +10,15 @@ cached_parameters = []
 def create_gradio_interface():
     with gr.Blocks(fill_width=True) as demo:
         with gr.Row():
-            with gr.Column(scale=2):
-                # 起点终点坐标输入
+            with gr.Column(scale=4):
                 with gr.Row():
+                    # 起点终点坐标输入
                     start_input = gr.Textbox(label="起点坐标", value="0 0 0")
                     end_input = gr.Textbox(label="终点坐标", value="10 10 10")
 
-                # 时间密度输入
-                with gr.Row():
+                    # 时间密度输入
                     time_input = gr.Number(label="时间(Tick)", value=20, minimum=1, step=1)
-                    amount_input = gr.Number(label="密度(每tick粒子数)", value=5, minimum=1, step=1)
+                    amount_input = gr.Number(label="密度(每tick坐标数)", value=5, minimum=1, step=1)
 
                 # 特效类型选择
                 with gr.Group():
@@ -52,14 +51,14 @@ def create_gradio_interface():
                     with gr.Row():
                         sin_amplitude_input = gr.Number(
                             label="正弦波振幅 控制波峰与轨迹距离",
-                            value=0.5,
+                            value=1.0,
                             step=0.001,
                             visible=False,
                         )
                         sin_frequency_input = gr.Slider(
                             label="正弦波频率 控制全程有几个周期",
-                            value=3.5,
-                            minimum=0,
+                            value=5.0,
+                            minimum=0.5,
                             maximum=20,
                             step=0.5,
                             visible=False,
@@ -77,7 +76,7 @@ def create_gradio_interface():
                         )
                         trajectory_rotation_end_input = gr.Slider(
                             label="旋转角度",
-                            value=1800,
+                            value=180,
                             step=15,
                             minimum=0,
                             maximum=7200,
@@ -91,9 +90,16 @@ def create_gradio_interface():
                         )
                     with gr.Row():
                         trajectory_rotation_direction_input = gr.Radio(
-                            label="旋转方向 手螺旋定则:大拇指指向旋转轴正方向,四指指向旋转方向",
+                            label="旋转方向 大拇指指向旋转轴正方向,四指指向旋转方向",
                             choices=["右手螺旋", "左手螺旋"],
                             value="右手螺旋",
+                        )
+                        trajectory_rotation_influence_input = gr.Radio(
+                            label="是否影响波动法平面",
+                            choices=["是", "否"],
+                            value="是",
+                            scale=0,
+                            visible=False,
                         )
 
                 # 波动旋转
@@ -122,12 +128,12 @@ def create_gradio_interface():
                         )
                     with gr.Row():
                         fluctuation_rotation_direction_input = gr.Radio(
-                            label="旋转方向 手螺旋定则:大拇指指向旋转轴正方向,四指指向旋转方向",
+                            label="旋转方向 大拇指指向旋转轴正方向,四指指向旋转方向",
                             choices=["右手螺旋", "左手螺旋"],
                             value="右手螺旋",
                         )
 
-            with gr.Column(scale=3):
+            with gr.Column(scale=5):
                 with gr.Row():
                     calculate_button = gr.Button("预览")
                     calculate_all_button = gr.Button("全部预览")
@@ -171,12 +177,15 @@ def create_gradio_interface():
 
         # 轨迹旋转 显示与隐藏
         def show_hide_trajectory_rotation_input(current_type):
-            return gr.update(visible=current_type == "是")
+            return [
+                gr.update(visible=current_type == "是"),
+                gr.update(visible=current_type == "是"),
+            ]
 
         trajectory_rotation_input.change(
             show_hide_trajectory_rotation_input,
             inputs=trajectory_rotation_input,
-            outputs=trajectory_rotation_end_input,
+            outputs=[trajectory_rotation_end_input, trajectory_rotation_influence_input],
         )
 
         # 波动旋转 显示与隐藏
@@ -201,6 +210,7 @@ def create_gradio_interface():
             trajectory_rotation_end,
             trajectory_rotation_direction,
             trajectory_rotation,
+            trajectory_rotation_influence,
             fluctuation_type,
             sin_amplitude,
             sin_frequency,
@@ -223,6 +233,7 @@ def create_gradio_interface():
                     trajectory_rotation_end,
                     trajectory_rotation_direction,
                     trajectory_rotation,
+                    trajectory_rotation_influence,
                 ),
                 "fluctuation_rotation": (
                     fluctuation_rotation_start,
@@ -328,6 +339,7 @@ def create_gradio_interface():
             trajectory_rotation_end,
             trajectory_rotation_direction,
             trajectory_rotation,
+            trajectory_rotation_influence,
             fluctuation_type,
             sin_amplitude,
             sin_frequency,
@@ -350,6 +362,7 @@ def create_gradio_interface():
                     trajectory_rotation_end,
                     trajectory_rotation_direction,
                     trajectory_rotation,
+                    trajectory_rotation_influence,
                 ),
                 "fluctuation_rotation": (
                     fluctuation_rotation_start,
@@ -387,6 +400,7 @@ def create_gradio_interface():
                 trajectory_rotation_end_input,
                 trajectory_rotation_direction_input,
                 trajectory_rotation_input,
+                trajectory_rotation_influence_input,
                 fluctuation_type_input,
                 sin_amplitude_input,
                 sin_frequency_input,
@@ -412,6 +426,7 @@ def create_gradio_interface():
                 trajectory_rotation_end_input,
                 trajectory_rotation_direction_input,
                 trajectory_rotation_input,
+                trajectory_rotation_influence_input,
                 fluctuation_type_input,
                 sin_amplitude_input,
                 sin_frequency_input,
