@@ -18,7 +18,7 @@ def create_gradio_interface():
 
                     # 时间密度输入
                     time_input = gr.Number(label="时间(Tick)", value=20, minimum=1, step=1)
-                    amount_input = gr.Number(label="密度(每tick坐标数)", value=5, minimum=1, step=1)
+                    amount_input = gr.Number(label="密度(每tick坐标数)", value=10, minimum=1, step=1)
 
                 # 特效类型选择
                 with gr.Group():
@@ -34,7 +34,7 @@ def create_gradio_interface():
                         quadratic_h_input = gr.Number(
                             label="二次函数参数 控制函数顶点与端点的高度差,正值与较高端点比较,负值与较低端点比较",
                             value=5.0,
-                            step=0.001,
+                            step=0.1,
                             visible=False,
                         )
 
@@ -52,7 +52,7 @@ def create_gradio_interface():
                         sin_amplitude_input = gr.Number(
                             label="正弦波振幅 控制波峰与轨迹距离",
                             value=1.0,
-                            step=0.001,
+                            step=0.1,
                             visible=False,
                         )
                         sin_frequency_input = gr.Slider(
@@ -152,6 +152,73 @@ def create_gradio_interface():
                     label="已缓存的参数",
                 )
 
+        input_components = [
+            start_input,
+            end_input,
+            time_input,
+            amount_input,
+            trajectory_type_input,
+            quadratic_h_input,
+            trajectory_rotation_start_input,
+            trajectory_rotation_end_input,
+            trajectory_rotation_direction_input,
+            trajectory_rotation_input,
+            trajectory_rotation_influence_input,
+            fluctuation_type_input,
+            sin_amplitude_input,
+            sin_frequency_input,
+            fluctuation_rotation_start_input,
+            fluctuation_rotation_end_input,
+            fluctuation_rotation_direction_input,
+            fluctuation_rotation_input,
+        ]
+
+        def build_params_dict(*args):
+            (
+                start,
+                end,
+                time,
+                amount,
+                trajectory_type,
+                quadratic_h,
+                trajectory_rotation_start,
+                trajectory_rotation_end,
+                trajectory_rotation_direction,
+                trajectory_rotation,
+                trajectory_rotation_influence,
+                fluctuation_type,
+                sin_amplitude,
+                sin_frequency,
+                fluctuation_rotation_start,
+                fluctuation_rotation_end,
+                fluctuation_rotation_direction,
+                fluctuation_rotation,
+            ) = args
+
+            return {
+                "start": start,
+                "end": end,
+                "time": time,
+                "amount": amount,
+                "trajectory_type": trajectory_type,
+                "quadratic_h": quadratic_h,
+                "fluctuation_type": fluctuation_type,
+                "sin_fluctuation": (sin_amplitude, sin_frequency),
+                "trajectory_rotation": (
+                    trajectory_rotation_start,
+                    trajectory_rotation_end,
+                    trajectory_rotation_direction,
+                    trajectory_rotation,
+                    trajectory_rotation_influence,
+                ),
+                "fluctuation_rotation": (
+                    fluctuation_rotation_start,
+                    fluctuation_rotation_end,
+                    fluctuation_rotation_direction,
+                    fluctuation_rotation,
+                ),
+            }
+
         # 轨迹类型输入框 显示与隐藏
         def show_hide_quadratic_h_input(current_type):
             return gr.update(visible=current_type == "二次函数线")
@@ -196,86 +263,7 @@ def create_gradio_interface():
             show_hide_fluctuation_rotation_input,
             inputs=fluctuation_rotation_input,
             outputs=fluctuation_rotation_end_input,
-        )
-
-        # 缓存当前参数
-        def cache_parameters(
-            start,
-            end,
-            time,
-            amount,
-            trajectory_type,
-            quadratic_h,
-            trajectory_rotation_start,
-            trajectory_rotation_end,
-            trajectory_rotation_direction,
-            trajectory_rotation,
-            trajectory_rotation_influence,
-            fluctuation_type,
-            sin_amplitude,
-            sin_frequency,
-            fluctuation_rotation_start,
-            fluctuation_rotation_end,
-            fluctuation_rotation_direction,
-            fluctuation_rotation,
-        ):
-            inputs_dict = {
-                "start": start,
-                "end": end,
-                "time": time,
-                "amount": amount,
-                "trajectory_type": trajectory_type,
-                "quadratic_h": quadratic_h,
-                "fluctuation_type": fluctuation_type,
-                "sin_fluctuation": (sin_amplitude, sin_frequency),
-                "trajectory_rotation": (
-                    trajectory_rotation_start,
-                    trajectory_rotation_end,
-                    trajectory_rotation_direction,
-                    trajectory_rotation,
-                    trajectory_rotation_influence,
-                ),
-                "fluctuation_rotation": (
-                    fluctuation_rotation_start,
-                    fluctuation_rotation_end,
-                    fluctuation_rotation_direction,
-                    fluctuation_rotation,
-                ),
-            }
-            global cached_parameters
-            cached_parameters.append(inputs_dict)
-            return update_cached_params_display()
-
-        # 清空缓存
-        def clear_cache():
-            global cached_parameters
-            cached_parameters = []
-            return update_cached_params_display()
-
-        # 更新缓存的参数显示
-        def update_cached_params_display():
-            global cached_parameters
-            data = []
-            for idx, params in enumerate(cached_parameters):
-                data.append(
-                    [
-                        idx,
-                        params["trajectory_type"]
-                        + " "
-                        + params["fluctuation_type"]
-                        + " "
-                        + str(params["trajectory_rotation"][0]),
-                    ]
-                )
-            return data
-
-        # 删除选中的缓存参数
-        def delete_selected_cache(ID):
-            global cached_parameters
-            if ID != -1:
-                # 删除选中的参数
-                cached_parameters = [params for idx, params in enumerate(cached_parameters) if idx != ID]
-            return update_cached_params_display()
+        )       
 
         # 创建 3D 图形
         def create_3d_plot(positions_list):
@@ -327,114 +315,65 @@ def create_gradio_interface():
 
             return fig
 
+        # 更新缓存的参数显示
+        def update_cached_params_display():
+            global cached_parameters
+            data = []
+            for idx, params in enumerate(cached_parameters):
+                data.append(
+                    [
+                        idx,
+                        params["trajectory_type"] + " " + params["fluctuation_type"] + " " + str(params["trajectory_rotation"][0]),
+                    ]
+                )
+            return data
+
+        # 清空缓存
+        def clear_cache():
+            global cached_parameters
+            cached_parameters = []
+            return update_cached_params_display()
+
+        # 删除选中的缓存参数
+        def delete_selected_cache(ID):
+            global cached_parameters
+            if ID != -1:
+                # 删除选中的参数
+                cached_parameters = [params for idx, params in enumerate(cached_parameters) if idx != ID]
+            return update_cached_params_display()
+
         # 计算函数
-        def on_calculate_button_click(
-            start,
-            end,
-            time,
-            amount,
-            trajectory_type,
-            quadratic_h,
-            trajectory_rotation_start,
-            trajectory_rotation_end,
-            trajectory_rotation_direction,
-            trajectory_rotation,
-            trajectory_rotation_influence,
-            fluctuation_type,
-            sin_amplitude,
-            sin_frequency,
-            fluctuation_rotation_start,
-            fluctuation_rotation_end,
-            fluctuation_rotation_direction,
-            fluctuation_rotation,
-        ):
-            inputs_dict = {
-                "start": start,
-                "end": end,
-                "time": time,
-                "amount": amount,
-                "trajectory_type": trajectory_type,
-                "quadratic_h": quadratic_h,
-                "fluctuation_type": fluctuation_type,
-                "sin_fluctuation": (sin_amplitude, sin_frequency),
-                "trajectory_rotation": (
-                    trajectory_rotation_start,
-                    trajectory_rotation_end,
-                    trajectory_rotation_direction,
-                    trajectory_rotation,
-                    trajectory_rotation_influence,
-                ),
-                "fluctuation_rotation": (
-                    fluctuation_rotation_start,
-                    fluctuation_rotation_end,
-                    fluctuation_rotation_direction,
-                    fluctuation_rotation,
-                ),
-            }
-            # 调用计算函数获取三维坐标
+        def on_calculate_button_click(*args):
+            inputs_dict = build_params_dict(*args)
             positions = calculate_positions(inputs_dict)
             # 创建 3D 图形并返回
             return create_3d_plot([positions])
 
+        # 缓存函数
+        def cache_parameters(*args):
+            global cached_parameters
+            params = build_params_dict(*args)
+            cached_parameters.append(params)
+            return update_cached_params_display()
+
         # 全部预览函数
         def on_calculate_all_button_click():
             global cached_parameters
-            positions_list = []
-            for params in cached_parameters:
-                positions = calculate_positions(params)
-                positions_list.append(positions)
+            positions_list = [calculate_positions(params) for params in cached_parameters]
             # 创建 3D 图形并返回
             return create_3d_plot(positions_list)
 
         # 预览按钮触发器
         calculate_button.click(
             fn=on_calculate_button_click,
-            inputs=[
-                start_input,
-                end_input,
-                time_input,
-                amount_input,
-                trajectory_type_input,
-                quadratic_h_input,
-                trajectory_rotation_start_input,
-                trajectory_rotation_end_input,
-                trajectory_rotation_direction_input,
-                trajectory_rotation_input,
-                trajectory_rotation_influence_input,
-                fluctuation_type_input,
-                sin_amplitude_input,
-                sin_frequency_input,
-                fluctuation_rotation_start_input,
-                fluctuation_rotation_end_input,
-                fluctuation_rotation_direction_input,
-                fluctuation_rotation_input,
-            ],
+            inputs=input_components,
             outputs=output,
         )
 
         # 缓存按钮触发器
         cache_button.click(
             fn=cache_parameters,
-            inputs=[
-                start_input,
-                end_input,
-                time_input,
-                amount_input,
-                trajectory_type_input,
-                quadratic_h_input,
-                trajectory_rotation_start_input,
-                trajectory_rotation_end_input,
-                trajectory_rotation_direction_input,
-                trajectory_rotation_input,
-                trajectory_rotation_influence_input,
-                fluctuation_type_input,
-                sin_amplitude_input,
-                sin_frequency_input,
-                fluctuation_rotation_start_input,
-                fluctuation_rotation_end_input,
-                fluctuation_rotation_direction_input,
-                fluctuation_rotation_input,
-            ],
+            inputs=input_components,
             outputs=cached_params_display,
         )
 

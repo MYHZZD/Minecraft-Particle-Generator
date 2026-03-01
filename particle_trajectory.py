@@ -30,23 +30,23 @@ def rotate_point_scipy(point, axis, theta):  # 绕轴旋转 右手系
     return rotated_point
 
 
-def rotate_axis_scipy(point, tangent):  # 将参考系旋转至法向量方向
+def rotate_axis_scipy(point, tangent):  # 将参考系X轴旋转至法向量方向
     # 原始y轴
     y_axis = np.array([0, 1, 0])  # 原始y轴
 
-    theta = np.arctan2(tangent[2], tangent[0])
-    rotated_point = rotate_point_scipy(point, y_axis, -theta)  # 绕y轴旋转
+    theta = np.arctan2(tangent[2], tangent[0])  # tangent 向量在 XZ 平面上的投影与 X 轴正方向的夹角
+    rotated_point = rotate_point_scipy(point, y_axis, -theta)  # 绕y轴旋转，对齐 X 轴与投影
     # 新z轴
     new_z_axis = normalize_vector(rotate_point_scipy([0, 0, 1], y_axis, -theta))
 
-    theta2 = np.arctan2(tangent[1], np.sqrt(np.square(tangent[0]) + np.square(tangent[2])))
-    rotated_point = rotate_point_scipy(rotated_point, new_z_axis, theta2)  # 绕新z轴旋转
+    theta2 = np.arctan2(tangent[1], np.sqrt(np.square(tangent[0]) + np.square(tangent[2])))  # tangent 向量与 XZ 平面的夹角
+    rotated_point = rotate_point_scipy(rotated_point, new_z_axis, theta2)  # 绕新z轴旋转，即新Z轴始终保持在原XOZ平面内
 
     return rotated_point
 
 
-def rotate_tangent_scipy(coordinates, delta, trajectory_rotation, total_particles):
-    # 计算垂线距离
+def rotate_tangent_scipy(coordinates, delta, trajectory_rotation, total_particles):  # 轨迹旋转法向量对波动中心轴方向的影响
+    # 计算垂线距离，旋转圆半径
     cross_product = np.cross(coordinates, delta)
     cross_product_magnitude = np.linalg.norm(cross_product)
     d_magnitude = np.linalg.norm(delta)
@@ -56,10 +56,12 @@ def rotate_tangent_scipy(coordinates, delta, trajectory_rotation, total_particle
     theta = (trajectory_rotation[1] / total_particles) * np.pi / 180.0
 
     if trajectory_rotation[1] != 0:
+        # 在YOZ内旋转
         if trajectory_rotation[2] == "右手螺旋":
             tangent_add = rotate_point_scipy(np.array([0, 0, 1]), np.array([1, 0, 0]), 0.5 * theta)
         else:
             tangent_add = rotate_point_scipy(np.array([0, 0, -1]), np.array([1, 0, 0]), -0.5 * theta)
+        # 将Y轴转移到目标方向
         tangent_add = rotate_axis_scipy(tangent_add, delta)
         tangent_add = normalize_vector(tangent_add) * (2.0 * distance * math.sin(0.5 * theta))
     else:
@@ -127,7 +129,7 @@ def calculate_sin_trajectory(delta, total_particles, sin_fluctuation):
     return
 
 
-def calculate_sin_fluctuation(tangent, total_particles, sin_fluctuation, fluctuation_rotation):  # 正弦波 波动
+def calculate_sin_fluctuation(total_particles, sin_fluctuation):  # 正弦波 波动
     # 生成正弦波
     length = 1
     lamda = length / sin_fluctuation[1]
@@ -137,22 +139,7 @@ def calculate_sin_fluctuation(tangent, total_particles, sin_fluctuation, fluctua
     z = np.zeros_like(t)
     points = np.vstack((x, y, z)).T
 
-    if fluctuation_rotation[3] != "否":  # 轨迹旋转，使用基础法向量
-        theta = trajectory_fluctuation_theta(fluctuation_rotation, total_particles)
-        for i in range(total_particles):
-            points[i] = rotate_point_scipy(points[i], np.array([1, 0, 0]), theta[i])
-    else:
-        if fluctuation_rotation[0] != 0:
-            for i in range(total_particles):
-                points[i] = rotate_point_scipy(
-                    points[i], np.array([1, 0, 0]), (fluctuation_rotation[0] / 180.0) * np.pi
-                )
-
-    rotated_points = []
-    for i in range(total_particles):
-        rotated_points.append(rotate_axis_scipy(points[i], tangent[i]))
-
-    return rotated_points
+    return points
 
 
 def calculate_positions(inputs_dict):
@@ -204,9 +191,22 @@ def calculate_positions(inputs_dict):
     if fluctuation_type == "无":
         coordinates_add = np.zeros_like(coordinates)
     elif fluctuation_type == "正弦波":
-        coordinates_add = calculate_sin_fluctuation(tangent, total_particles, sin_fluctuation, fluctuation_rotation)
+        coordinates_add = calculate_sin_fluctuation(total_particles, sin_fluctuation)
     else:
         raise ValueError("未知波动类型")
+
+    # 波动旋转
+    if fluctuation_rotation[3] != "否":
+        theta = trajectory_fluctuation_theta(fluctuation_rotation, total_particles)
+        for i in range(total_particles):
+            coordinates_add[i] = rotate_point_scipy(coordinates_add[i], np.array([1, 0, 0]), theta[i])
+    else:
+        if fluctuation_rotation[0] != 0:
+            for i in range(total_particles):
+                coordinates_add[i] = rotate_point_scipy(coordinates_add[i], np.array([1, 0, 0]), (fluctuation_rotation[0] / 180.0) * np.pi)
+    # 波动同步至轨迹方向
+    for i in range(total_particles):
+        coordinates_add[i] = rotate_axis_scipy(coordinates_add[i], tangent[i])
 
     coordinates_step1 = coordinates_add
 
@@ -222,8 +222,6 @@ def calculate_positions(inputs_dict):
     else:
         if trajectory_rotation[0] != 0:
             for i in range(total_particles):
-                coordinates[i] = rotate_point_scipy(
-                    coordinates[i], tangent_base, (trajectory_rotation[0] / 180.0) * np.pi
-                )
+                coordinates[i] = rotate_point_scipy(coordinates[i], tangent_base, (trajectory_rotation[0] / 180.0) * np.pi)
 
     return coordinates
