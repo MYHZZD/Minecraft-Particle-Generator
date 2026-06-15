@@ -29,7 +29,7 @@ def create_gradio_interface():
                             value="直线",
                         )
 
-                    # 二次函数形状控制参数 a 输入框（初始隐藏）
+                    # 二次函数形状控制参数 a 输入框(初始隐藏)
                     with gr.Row():
                         quadratic_h_input = gr.Number(
                             label="二次函数参数 控制函数顶点与端点的高度差,正值与较高端点比较,负值与较低端点比较",
@@ -47,7 +47,7 @@ def create_gradio_interface():
                             value="无",
                         )
 
-                    # 正弦波控制参数 Amplitude、Frequency 输入框（初始隐藏）
+                    # 正弦波控制参数 Amplitude、Frequency 输入框(初始隐藏)
                     with gr.Row():
                         sin_amplitude_input = gr.Number(
                             label="正弦波振幅 控制波峰与轨迹距离",

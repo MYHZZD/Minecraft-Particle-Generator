@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import mido
+import copy
 from mido import MidiFile
 
 
@@ -22,9 +23,7 @@ def process_midi_file(midi_file_path):
         for msg in track:
             absolute_tick += msg.time
             if msg.type == "set_tempo":
-                tempo_events.append(
-                    {"tick": absolute_tick, "bpm": mido.tempo2bpm(msg.tempo)}
-                )
+                tempo_events.append({"tick": absolute_tick, "bpm": mido.tempo2bpm(msg.tempo)})
                 found_tempo = True
 
     # 如果没有任何速度事件，添加默认的150 BPM
@@ -35,9 +34,7 @@ def process_midi_file(midi_file_path):
     temp_dict = {}
     for event in tempo_events:
         temp_dict[event["tick"]] = event["bpm"]
-    tempo_events = [
-        {"tick": tick, "bpm": bpm} for tick, bpm in sorted(temp_dict.items())
-    ]
+    tempo_events = [{"tick": tick, "bpm": bpm} for tick, bpm in sorted(temp_dict.items())]
 
     # 处理所有轨道音符
     tracks = []
@@ -62,9 +59,7 @@ def process_midi_file(midi_file_path):
                     "velocity": msg.velocity,
                 }
 
-            elif msg.type == "note_off" or (
-                msg.type == "note_on" and msg.velocity == 0
-            ):
+            elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
                 key = (msg.channel, msg.note)
                 if key in active_notes:
                     note_start = active_notes.pop(key)
@@ -113,15 +108,7 @@ def process_midi_file(midi_file_path):
         # 对CC去重
         cc_dic = {}
         for event in track_cc:
-            cc_dic[
-                str(event["tick"])
-                + "/"
-                + str(event["channel"])
-                + "/"
-                + str(event["control"])
-                + "/"
-                + str(event["value"])
-            ] = event
+            cc_dic[str(event["tick"]) + "/" + str(event["channel"]) + "/" + str(event["control"]) + "/" + str(event["value"])] = event
         track_cc = list(cc_dic.values())
 
         # 添加到轨道列表
@@ -139,6 +126,67 @@ def process_midi_file(midi_file_path):
         "tempo_events": tempo_events,
         "tracks": tracks,
     }
+
+
+def mcmappings(result, ticks_per_beats):
+    def tick_mappings(tick, mapping_times):
+        remainder = int(tick % mapping_times)
+        # 如果余数小于映射倍数的一半则向下取整,对于mapping times=6，余数012向下取整，345向上取整
+        if remainder < int(mapping_times / 2):
+            tick = int(math.floor(tick / mapping_times))
+        else:
+            tick = int(math.floor(tick / mapping_times)) + 1
+        return tick
+
+    mcresult = copy.deepcopy(result)
+    max_tick = 0
+    mapping_times = result["ticks_per_beat"] / ticks_per_beats
+    # 检查映射倍数是否为整数且为偶数
+    if not mapping_times.is_integer() or mapping_times % 2 != 0:
+        print(f"不合法的ticks per beats与PPQ。映射倍数为{mapping_times}")
+
+    # 曲速处理
+    mapped_tempos = []
+    for tempo in result["tempo_events"]:
+        mapped_tempo_event = tempo.copy()
+        mapped_tempo_event["tick"] = tick_mappings(tempo["tick"], mapping_times)
+        mapped_tempos.append(mapped_tempo_event)
+        if mapped_tempo_event["tick"] > max_tick:
+            max_tick = mapped_tempo_event["tick"]
+    mcresult["tempo_events"] = mapped_tempos
+
+    # 轨道处理
+    mapped_tracks = []
+    for track in result["tracks"]:
+        mapped_track = track.copy()
+
+        mapped_track["total_ticks"] = tick_mappings(track["total_ticks"], mapping_times)
+
+        if track["notes"]:
+            mapped_notes = []
+            for note in track["notes"]:
+                mapped_note_event = note.copy()
+                mapped_note_event["start_tick"] = tick_mappings(note["start_tick"], mapping_times)
+                mapped_note_event["duration"] = tick_mappings(note["duration"], mapping_times)
+                mapped_note_event["end_tick"] = tick_mappings(note["end_tick"], mapping_times)
+                mapped_notes.append(mapped_note_event)
+                if mapped_note_event["end_tick"] > max_tick:
+                    max_tick = mapped_note_event["end_tick"]
+            mapped_track["notes"] = mapped_notes
+
+        if track["cc_events"]:
+            mapped_ccs = []
+            for cc in track["cc_events"]:
+                mapped_cc_event = cc.copy()
+                mapped_cc_event["tick"] = tick_mappings(cc["tick"], mapping_times)
+                mapped_ccs.append(mapped_cc_event)
+                if mapped_cc_event["tick"] > max_tick:
+                    max_tick = mapped_cc_event["tick"]
+            mapped_track["cc_events"] = mapped_ccs
+        mapped_tracks.append(mapped_track)
+    mcresult["tracks"] = mapped_tracks
+
+    return mcresult, max_tick
 
 
 def simulate_explosion(
@@ -164,7 +212,7 @@ def simulate_explosion(
 
     rng = np.random.RandomState(seed)
 
-    # 生成随机方向向量（球面均匀分布）
+    # 生成随机方向向量(球面均匀分布)
     theta = rng.uniform(0, 2 * np.pi, n_particles)
     phi = np.arccos(2 * rng.uniform(0, 1, n_particles) - 1)
 
@@ -252,10 +300,7 @@ def random_trajectory(
     vel1 = np.array(end_vel)
 
     # 三维五次多项式，每个维度加速度默认0
-    polys = [
-        QuinticPolynomial(0, T, pos0[dim], pos1[dim], vel0[dim], vel1[dim], 0.0, 0.0)
-        for dim in range(3)
-    ]
+    polys = [QuinticPolynomial(0, T, pos0[dim], pos1[dim], vel0[dim], vel1[dim], 0.0, 0.0) for dim in range(3)]
 
     total_samples = int(T * n_samples) + 1
     t_eval = np.linspace(0, T, total_samples)
@@ -271,9 +316,7 @@ def random_trajectory(
     return pos_list, vel_list
 
 
-def add_note_to_spectrum(
-    spectrum, freq_bands, t, d, n, v, fade_frames, Q, rand_range, seed
-):
+def add_note_to_spectrum(spectrum, freq_bands, t, d, n, v, fade_frames, Q, rand_range, seed):
     np.random.seed(seed)
     total_frames = len(spectrum)
     num_bands = len(freq_bands)
@@ -298,7 +341,7 @@ def add_note_to_spectrum(
     sustain_end_frame = min(total_frames, t + d)
     fade_end_frame = min(total_frames, t + d + fade_frames)
 
-    # 指数衰减常数（控制先快后慢的程度，值越大衰减越快）
+    # 指数衰减常数(控制先快后慢的程度，值越大衰减越快)
     decay_constant = 5.0
 
     # 遍历每一帧
@@ -313,9 +356,9 @@ def add_note_to_spectrum(
 
         # 对每个泛音分别处理
         for harm_idx, amp_h in enumerate(harmonic_amps):
-            k = harm_idx + 1  # 谐波次数（基频为1）
+            k = harm_idx + 1  # 谐波次数(基频为1)
             f_h = f0 * k
-            # 如果泛音频率超出频段范围，可跳过（高斯响应几乎为零）
+            # 如果泛音频率超出频段范围，可跳过(高斯响应几乎为零)
             if f_h < freq_bands[0] or f_h > freq_bands[-1]:
                 continue
 
@@ -324,7 +367,7 @@ def add_note_to_spectrum(
             gauss_h = np.exp(-((freq_bands - f_h) ** 2) / (2 * sigma_h**2))
             gauss_h *= amplitude * amp_h  # 乘以力度和泛音幅度
 
-            # 叠加到该帧的每个频段（每个频段独立随机因子）
+            # 叠加到该帧的每个频段(每个频段独立随机因子)
             for band_idx in range(num_bands):
                 rand_factor = np.random.uniform(rand_range[0], rand_range[1])
                 spectrum[frame_idx][band_idx] += gauss_h[band_idx] * coeff * rand_factor

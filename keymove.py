@@ -1,103 +1,46 @@
 import math
 import copy
 import numpy as np
+import tkinter as tk
+from tkinter import filedialog
 from extrafunction import (
     simulate_explosion,
     random_trajectory,
     add_note_to_spectrum,
     process_midi_file,
+    mcmappings,
 )
 
-
-midi_path = "./tests.mid"
+# 创建 Tkinter 根窗口并隐藏(避免显示空白窗口)
+root = tk.Tk()
+root.withdraw()
+midi_path = filedialog.askopenfilename(
+    title="选择MIDI",                     # 对话框标题
+    filetypes=[("所有文件", "*.*")]         # 可选：限制文件类型
+)
+# midi_path = "./tests.mid"
 ticks_per_beats = 16.00  # FL PPQ默认96
 start_delay = 72
 fade_time = 5
 move_mode = "stable"  # stable固定键盘位置。legacy移动键盘位置
 
 
-def tick_mappings(tick, mapping_times):
-    remainder = int(tick % mapping_times)
-    # 如果余数小于映射倍数的一半则向下取整,对于mapping times=6，余数012向下取整，345向上取整
-    if remainder < int(mapping_times / 2):
-        tick = int(math.floor(tick / mapping_times))
-    else:
-        tick = int(math.floor(tick / mapping_times)) + 1
-    return tick
-
-
 if __name__ == "__main__":
     result = process_midi_file(midi_path)
-    mcresult = copy.deepcopy(result)
-    max_tick = 0
-    mapping_times = result["ticks_per_beat"] / ticks_per_beats
-    # 检查映射倍数是否为整数且为偶数
-    if not mapping_times.is_integer() or mapping_times % 2 != 0:
-        print(f"不合法的ticks per beats与PPQ。映射倍数为{mapping_times}")
-
-    # 曲速处理
-    mapped_tempos = []
-    for tempo in result["tempo_events"]:
-        mapped_tempo_event = tempo.copy()
-        mapped_tempo_event["tick"] = tick_mappings(tempo["tick"], mapping_times)
-        mapped_tempos.append(mapped_tempo_event)
-        if mapped_tempo_event["tick"] > max_tick:
-            max_tick = mapped_tempo_event["tick"]
-    mcresult["tempo_events"] = mapped_tempos
-
-    # 轨道处理
-    mapped_tracks = []
-    for track in result["tracks"]:
-        mapped_track = track.copy()
-
-        mapped_track["total_ticks"] = tick_mappings(track["total_ticks"], mapping_times)
-
-        if track["notes"]:
-            mapped_notes = []
-            for note in track["notes"]:
-                mapped_note_event = note.copy()
-                mapped_note_event["start_tick"] = tick_mappings(
-                    note["start_tick"], mapping_times
-                )
-                mapped_note_event["duration"] = tick_mappings(
-                    note["duration"], mapping_times
-                )
-                mapped_note_event["end_tick"] = tick_mappings(
-                    note["end_tick"], mapping_times
-                )
-                mapped_notes.append(mapped_note_event)
-                if mapped_note_event["end_tick"] > max_tick:
-                    max_tick = mapped_note_event["end_tick"]
-            mapped_track["notes"] = mapped_notes
-
-        if track["cc_events"]:
-            mapped_ccs = []
-            for cc in track["cc_events"]:
-                mapped_cc_event = cc.copy()
-                mapped_cc_event["tick"] = tick_mappings(cc["tick"], mapping_times)
-                mapped_ccs.append(mapped_cc_event)
-                if mapped_cc_event["tick"] > max_tick:
-                    max_tick = mapped_cc_event["tick"]
-            mapped_track["cc_events"] = mapped_ccs
-        mapped_tracks.append(mapped_track)
-    mcresult["tracks"] = mapped_tracks
+    mcresult, max_tick = mcmappings(result, ticks_per_beats)
     # print(result)
     # print(mcresult)
     print("midi读取成功\n")
 
     # 输出部分
-    mcfunction = [
-        [] for _ in range(max_tick + 1 + start_delay + 2 + fade_time)
-    ]  # 瀑布流延迟start_delay，瀑布流清除2tick,频谱图fade_time
+    mcfunction = [[] for _ in range(max_tick + 1 + start_delay + 2 + fade_time)]  # 瀑布流延迟start_delay，瀑布流清除2tick,频谱图fade_time
     # 琴键操作
     for i, track in enumerate(mcresult["tracks"]):
         total_ticks = int(track["total_ticks"])
         if track["notes"] != []:
             for j in range(total_ticks + 1):
                 repeat_note = []
-                for note_event in reversed(
-                    track["notes"]
-                ):  # 反转序列，先添加后侧音符到按键列表，判断重复
+                for note_event in reversed(track["notes"]):  # 反转序列，先添加后侧音符到按键列表，判断重复
                     if note_event["start_tick"] == j:
                         if int(note_event["note"] % 12) in [0, 2, 4, 5, 7, 9, 11]:
                             mcfunction[j + start_delay].append(
@@ -110,9 +53,7 @@ if __name__ == "__main__":
                         repeat_note.append(note_event["note"])  # 某刻会按下去的键
 
                     elif note_event["end_tick"] == j:
-                        if (
-                            note_event["note"] in repeat_note
-                        ):  # 如果同一刻有前个音符end和后个音符on，off事件提前1tick.注意：如果前一个音符只有1t，会吞掉前一个音符
+                        if note_event["note"] in repeat_note:  # 如果同一刻有前个音符end和后个音符on，off事件提前1tick.注意：如果前一个音符只有1t，会吞掉前一个音符
                             k = j - 1
                         else:
                             k = j
@@ -139,11 +80,7 @@ if __name__ == "__main__":
                             location = 0.5
                         else:
                             location = 1.5
-                        location += (
-                            math.floor(note_event["note"] / 12) * 14
-                            + int(note_event["note"] % 12)
-                            - 24
-                        )
+                        location += math.floor(note_event["note"] / 12) * 14 + int(note_event["note"] % 12) - 24
                         for l in range(note_event["duration"]):
                             if note_event["duration"] > start_delay and l > start_delay:
                                 mcfunction[j + l].append(
@@ -153,16 +90,12 @@ if __name__ == "__main__":
                                 mcfunction[j + l].append(
                                     f'execute at @e[type=minecraft:armor_stand,tag=piano] run summon block_display ~{start_delay+20} ~{0.5*waterfall_tick**2+4.495:.4f} ~{location} {{block_state:{{Name:"minecraft:note_block",Properties:{{powered:"false",instrument:"harp",note:"{i}"}}}},brightness:{{block:12,sky:15}},Tags:["waterfall","track{i}note{k}","tick{l}"]}}'
                                 )
-                            mcfunction[j + l].append(
-                                f"execute as @e[tag=track{i}note{k},tag=tick{l}] run data merge entity @s {{start_interpolation:0,teleport_duration:1}}"
-                            )
+                            mcfunction[j + l].append(f"execute as @e[tag=track{i}note{k},tag=tick{l}] run data merge entity @s {{start_interpolation:0,teleport_duration:1}}")
                             for m in range(waterfall_tick * waterfall_interval):
                                 mcfunction[j + l + m].append(
                                     f"execute as @e[tag=track{i}note{k},tag=tick{l}] at @s run tp @s ~ ~{0.5*(waterfall_tick-(1/waterfall_interval)-0.5*m)**2-0.5*(waterfall_tick-0.5*m)**2:.4f} ~"
                                 )
-                            mcfunction[j + l + start_delay + 2].append(
-                                f"kill @e[tag=track{i}note{k},tag=tick{l}]"
-                            )
+                            mcfunction[j + l + start_delay + 2].append(f"kill @e[tag=track{i}note{k},tag=tick{l}]")
                         mcfunction[j + start_delay].append(
                             f'execute as @e[tag=track{i}note{k}] run data merge entity @s {{block_state:{{Name:"minecraft:note_block",Properties:{{powered:"true",instrument:"harp",note:"{i}"}}}},brightness:{{block:15,sky:15}}}}'
                         )
@@ -178,9 +111,7 @@ if __name__ == "__main__":
         spectrum.append(
             f'execute at @e[type=minecraft:armor_stand,tag=piano] run summon block_display ~{start_delay+20} ~{0.5*waterfall_tick**2-(0.5*waterfall_tick**2-0.5*(waterfall_tick-(1/waterfall_interval))**2)+5.5:.4f} ~{-20+i+0.5+0.1} {{block_state:{{Name:"minecraft:sea_lantern"}},brightness:{{block:15,sky:15}},transformation:[1.00f,0.00f,0.00f,0.00f,0.00f,0.10f,0.00f,0.00f,0.00f,0.00f,0.80f,0.00f,0.00f,0.00f,0.00f,1.00f],Tags:["spectrum","spectrum{i}"]}}'
         )
-    spectrum.append(
-        f"execute as @e[tag=spectrum] run data merge entity @s {{start_interpolation:0,teleport_duration:1,interpolation_duration:1}}"
-    )
+    spectrum.append(f"execute as @e[tag=spectrum] run data merge entity @s {{start_interpolation:0,teleport_duration:1,interpolation_duration:1}}")
     with open("spectrum.mcfunction", "w") as f:
         for cmd in spectrum:
             f.write(cmd + "\n")
@@ -208,21 +139,12 @@ if __name__ == "__main__":
     cc_exp.append(max_tick)
 
     for i in range(max_tick + 1):
-        if (
-            cc_exp == [max_tick, max_tick]
-            and i % ttime == 0
-            and max_tick + 3 + fade_time - i
-            > ttime  # 传统模式，适用于标准对齐的midi，tcount点处于小节线上。fade time也作为冗余
-        ) or (
-            cc_exp != [max_tick, max_tick]
-            and i in cc_exp
-            and i != max_tick  # cc控制模式，需要手动创建cc事件作为标记
+        if (cc_exp == [max_tick, max_tick] and i % ttime == 0 and max_tick + 3 + fade_time - i > ttime) or (  # 传统模式，适用于标准对齐的midi，tcount点处于小节线上。fade time也作为冗余
+            cc_exp != [max_tick, max_tick] and i in cc_exp and i != max_tick  # cc控制模式，需要手动创建cc事件作为标记
         ):
             if cc_exp != [max_tick, max_tick]:
                 ttime_cc = cc_exp[cc_exp.index(i) + 1] - cc_exp[cc_exp.index(i)]
-                ttime_cc_next = (
-                    cc_exp[cc_exp.index(i) + 2] - cc_exp[cc_exp.index(i) + 1]
-                )
+                ttime_cc_next = cc_exp[cc_exp.index(i) + 2] - cc_exp[cc_exp.index(i) + 1]
                 ttime = ((ttime_cc // 4) + 1) * 4
                 ttime_next = ((ttime_cc_next // 4) + 1) * 4
                 tcount = tcount_default * ttime // ttime_default
@@ -233,9 +155,7 @@ if __name__ == "__main__":
                 mcfunction[i + start_delay].append(
                     f'execute at @e[type=minecraft:armor_stand,tag=piano] run summon block_display ~{exp_center[0]} ~{exp_center[1]} ~{exp_center[2]} {{block_state:{{Name:"minecraft:cherry_leaves"}},brightness:{{block:15,sky:15}},Tags:["expblock","tick{i}exp","block{count}"]}}'
                 )
-            mcfunction[i + start_delay].append(
-                f"execute as @e[tag=tick{i}exp] run data merge entity @s {{start_interpolation:0,teleport_duration:1,interpolation_duration:1}}"
-            )
+            mcfunction[i + start_delay].append(f"execute as @e[tag=tick{i}exp] run data merge entity @s {{start_interpolation:0,teleport_duration:1,interpolation_duration:1}}")
             for timeadd in range(ttime - 1):
                 for count in range(tcount):
                     addpos = positions[timeadd + 1][count]
@@ -243,9 +163,7 @@ if __name__ == "__main__":
                         f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp @e[tag=tick{i}exp,tag=block{count}] ~{exp_center[0]+addpos[0]:.4f} ~{exp_center[1]+addpos[1]*0.75:.4f} ~{exp_center[2]+addpos[2]:.4f}"
                     )
             if max_tick - i > ttime * 2 + exp_center[0]:
-                mcfunction[i + start_delay + ttime + exp_center[0]].append(
-                    f"kill @e[tag=tick{i}exp]"
-                )
+                mcfunction[i + start_delay + ttime + exp_center[0]].append(f"kill @e[tag=tick{i}exp]")
             print(f"爆炸特效{i}tick成功")
 
             # 粒子特效
@@ -256,26 +174,15 @@ if __name__ == "__main__":
             for track in mcresult["tracks"]:
                 if track["notes"] != []:
                     for note_event in track["notes"]:
-                        if (
-                            note_event["start_tick"] >= i + ttime / 2
-                            and note_event["start_tick"] < i + ttime_next / 2 + ttime
-                        ):
+                        if note_event["start_tick"] >= i + ttime / 2 and note_event["start_tick"] < i + ttime_next / 2 + ttime:
 
                             if int(note_event["note"] % 12) < 5:
-                                location = (
-                                    0.5 + 0.5
-                                )  # 粒子与方块不同，没有体积，额外加半格才是对应方块中心位置
+                                location = 0.5 + 0.5  # 粒子与方块不同，没有体积，额外加半格才是对应方块中心位置
                             else:
                                 location = 1.5 + 0.5
-                            location += (
-                                math.floor(note_event["note"] / 12) * 14
-                                + int(note_event["note"] % 12)
-                                - 24
-                            )
+                            location += math.floor(note_event["note"] / 12) * 14 + int(note_event["note"] % 12) - 24
                             if move_mode == "legacy":
-                                note_pos.append(
-                                    [note_event["start_tick"] - i, 6, location]
-                                )  # 基于参考点
+                                note_pos.append([note_event["start_tick"] - i, 6, location])  # 基于参考点
                             else:
                                 note_pos.append([0, 6, location])
                             note_time.append(note_event["start_tick"] - i)
@@ -293,13 +200,8 @@ if __name__ == "__main__":
                 ttcount, int((ttime / 4) * density * 2), tdistance * density, i + 1
             )  # 四分之一的时间爆炸，输入二分之一时间，后期取数组一半位置。每秒钟density个点，但输入时间单位是tick，所以时间变成density倍，距离也要变成density倍，后期除density
 
-            delta_positisons = (
-                np.array(n_positions) * np.array([1, 1, 3]) / density
-                + np.array(exp_center) * np.array([1.5, 1, 1])
-            ).tolist()  # 原点从爆炸中心点移动到参考点，x轴远1.5倍，z轴缩放3倍
-            delta_increments = (
-                np.array(n_displacement_increments) * np.array([1, 1, 3])
-            ).tolist()
+            delta_positisons = (np.array(n_positions) * np.array([1, 1, 3]) / density + np.array(exp_center) * np.array([1.5, 1, 1])).tolist()  # 原点从爆炸中心点移动到参考点，x轴远1.5倍，z轴缩放3倍
+            delta_increments = (np.array(n_displacement_increments) * np.array([1, 1, 3])).tolist()
             for j in range(ttcount):
                 pos_list, vel_list = random_trajectory(
                     delta_positisons[int((ttime / 4) * density - 1)][j],
@@ -357,10 +259,7 @@ if __name__ == "__main__":
             for i, note_event in enumerate(track["notes"]):
                 duration = note_event["duration"]
                 if n_intervals != 0:
-                    while (
-                        interval_index < n_intervals
-                        and pedal_intervals[interval_index][1] <= note_event["end_tick"]
-                    ):
+                    while interval_index < n_intervals and pedal_intervals[interval_index][1] <= note_event["end_tick"]:
                         interval_index += 1
                     if interval_index < n_intervals:
                         on_tick, off_tick = pedal_intervals[interval_index]
@@ -380,17 +279,27 @@ if __name__ == "__main__":
                     i,
                 )
                 print(f"添加音符{note_event["note"]}成功")
-    # 防爆
-    threshold = 2
-    global_max = max([v for frame in spectrum for v in frame])
-    for frame in spectrum:
-        for i in range(len(frame)):
-            x = frame[i]
-            frame[i] = threshold * np.log1p(k * x) / np.log1p(k * global_max)
+    # 防爆压缩
+    spectrum_np = np.array(spectrum, dtype=np.float32)
+    threshold = 2  # 上界
+    global_max = np.max(spectrum_np)
+    k = 20.0  # 压缩比例
+    spectrum_np = threshold * np.log1p(k * spectrum_np) / np.log1p(k * global_max)
+    # 视觉抖动
+    noise_start = 0.7  # 从70%开始加扰动
+    noise_scale = 0.1  # 最大扰动幅度
+    upper_soft = 1.1  # 允许轻微突破上界
+    ratio = spectrum_np / threshold  # 计算比例
+    noise_strength = np.clip((ratio - noise_start) / (1 - noise_start), 0, 1)  # 只对高值区域产生噪声强度
+    noise = np.random.rand(*spectrum_np.shape) * 2 - 1  # 生成噪声(-1~1)
+    spectrum_np *= 1 + noise * noise_strength * noise_scale  # 应用噪声(越接近上界越强)
+    spectrum_np = np.minimum(spectrum_np, threshold * upper_soft)  # 软上限限制
+    spectrum = spectrum_np.tolist()
+
     # 变换实体
     for j in range(max_tick + fade_time):
         for k in range(num_bands):
-            if j > 0 and str(f"{spectrum[j][k]:.4f}") == str(f"{spectrum[j-1][k]:.4f}"):
+            if j > 0 and abs(spectrum[j][k] - spectrum[j - 1][k]) < 1e-4:
                 continue
             mcfunction[j + start_delay].append(
                 f"execute as @e[tag=spectrum{k}] run data modify entity @s transformation set value [1.00f,0.00f,0.00f,0.00f,0.00f,{0.1+8*spectrum[j][k]:.4f}f,0.00f,0.00f,0.00f,0.00f,0.80f,0.00f,0.00f,0.00f,0.00f,1.00f]"
@@ -400,15 +309,11 @@ if __name__ == "__main__":
     # tp
     if move_mode == "legacy":
         for i in range(max_tick + 1 + start_delay + 2):
-            mcfunction[i].append(
-                f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp ~1 ~ ~"
-            )
+            mcfunction[i].append(f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp ~1 ~ ~")
             mcfunction[i].append(f"execute as @e[tag=keys] at @s run tp ~1 ~ ~")
             mcfunction[i].append(f"execute as @e[tag=spectrum] at @s run tp ~1 ~ ~")
             if i == 0:
-                mcfunction[i].append(
-                    f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp @p ~-32 ~23 ~52 -90 1"
-                )
+                mcfunction[i].append(f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp @p ~-32 ~23 ~52 -90 1")
             else:
                 mcfunction[i].append(f"execute as @p at @p run tp ~1 ~ ~")
     else:
@@ -416,17 +321,11 @@ if __name__ == "__main__":
             mcfunction[i].append(f"execute as @e[tag=waterfall] at @s run tp ~-1 ~ ~")
             mcfunction[i].append(f"execute as @e[tag=expblock] at @s run tp ~-1 ~ ~")
             if i == 0:
-                mcfunction[i].append(
-                    f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp @p ~-32 ~23 ~52 -90 1"
-                )
-                mcfunction[i].append(
-                    f"execute as @e[tag=spectrum] at @s run tp ~-1 ~ ~"
-                )
+                mcfunction[i].append(f"execute as @e[type=minecraft:armor_stand,tag=piano] at @s run tp @p ~-32 ~23 ~52 -90 1")
+                mcfunction[i].append(f"execute as @e[tag=spectrum] at @s run tp ~-1 ~ ~")
 
     # 写入文件
-    for i in range(
-        max_tick + 1 + start_delay + fade_time
-    ):  # 2tick瀑布流消失，包含在频谱淡出里
+    for i in range(max_tick + 1 + start_delay + fade_time):  # 2tick瀑布流消失，包含在频谱淡出里
         with open(f"tick{i}.mcfunction", "w", encoding="utf-8") as f:
             mcfunction[i].append(f"schedule function tick{i+1} 1")
             f.write("\n".join(mcfunction[i]))

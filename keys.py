@@ -6,7 +6,7 @@ key_types.append(True)  # A0 白键
 key_types.append(False)  # A#0 黑键
 key_types.append(True)  # B0 白键
 
-# 添加第1到第7八度的键（每个八度12个键）
+# 添加第1到第7八度的键(每个八度12个键)
 for octave in range(1, 8):  # 1到7八度
     # 每个八度内的音：C, C#, D, D#, E, F, F#, G, G#, A, A#, B
     notes = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
