@@ -17,6 +17,9 @@ MAX_TRACKS = siegedata.MAX_TRACKS
 GM_PROGRAM_NAMES = siegedata.GM_PROGRAM_NAMES
 MC_PROGRAM_NAMES = siegedata.MC_PROGRAM_NAMES
 
+# 16 种高对比度颜色
+channel_colors = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999", "#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f", "#e5c494"]
+
 
 def midi_to_note_name(midi_note, use_flats=False):
     """
@@ -53,40 +56,71 @@ def recommend_range(low, high):
 
 
 def parse_midi(file_path):
-    """解析MIDI文件，返回基础信息DataFrame和乐器列表"""
     try:
-        midi = pretty_midi.PrettyMIDI(file_path)
-        instruments = midi.instruments
-        data = []
-        for idx, inst in enumerate(instruments):
-            program = inst.program
-            is_drum = inst.is_drum
-            num_notes = len(inst.notes)
-            if num_notes > 0:
-                pitches = [note.pitch for note in inst.notes]
-                min_pitch = min(pitches)
-                max_pitch = max(pitches)
-            else:
-                min_pitch = max_pitch = None
-            data.append(
+        midi_data = extrafunction.process_midi_file(file_path)
+        tracks = midi_data["tracks"]
+
+        rows = []
+        track_serial = 0  # 只统计有音符的轨道
+
+        for _, track in enumerate(tracks):
+            notes = track["notes"]
+            if not notes:
+                continue
+            track_serial += 1
+
+            # 按通道统计
+            channel_notes = {}  # channel -> list of pitches
+            for note_event in notes:
+                ch = note_event["channel"]
+                pitch = note_event["note"]
+                channel_notes.setdefault(ch, []).append(pitch)
+
+            total_notes = len(notes)
+
+            # 准备各列的多通道拼接字符串
+            ch_parts = []  # 通道组成
+            min_parts = []  # 最小音高
+            max_parts = []  # 最大音高
+            range_parts = []  # 推荐音域
+
+            for ch, pitches in sorted(channel_notes.items()):
+                cnt = len(pitches)
+                min_p = min(pitches)
+                max_p = max(pitches)
+                range_str = recommend_range(min_p, max_p)
+                color = channel_colors[ch % len(channel_colors)]
+
+                # 通道组成：通道号 + 音符数
+                ch_parts.append(f'<span style="color:{color}; font-weight:bold;">通道{ch+1}:{cnt}音符</span>')
+                # 最小音高：通道号 + 音高值
+                min_parts.append(f'<span style="color:{color}; font-weight:bold;">{min_p}:{midi_to_note_name(min_p)}</span>')
+                # 最大音高
+                max_parts.append(f'<span style="color:{color}; font-weight:bold;">{max_p}:{midi_to_note_name(max_p)}</span>')
+                # 推荐音域
+                range_parts.append(f'<span style="color:{color}; font-weight:bold;">{range_str}</span>')
+
+            rows.append(
                 {
-                    "轨道索引": idx,
-                    "音色名称": "Drum Kit" if is_drum else f"{program} : {GM_PROGRAM_NAMES[program]}",
-                    "音符数量": num_notes,
-                    "最小音高": "None" if min_pitch is None else f"{min_pitch} : {midi_to_note_name(min_pitch)}",
-                    "最大音高": "None" if max_pitch is None else f"{max_pitch} : {midi_to_note_name(max_pitch)}",
-                    "推荐音域": "None" if max_pitch is None else recommend_range(min_pitch, max_pitch),
+                    "轨道索引": track_serial - 1,
+                    "通道组成": "; ".join(ch_parts),
+                    "音符数量": total_notes,
+                    "最小音高": "; ".join(min_parts),
+                    "最大音高": "; ".join(max_parts),
+                    "推荐音域": "; ".join(range_parts),
                 }
             )
-        df = pd.DataFrame(data)
-        return df, instruments
+
+        df = pd.DataFrame(rows)
+        return df
+
     except Exception as e:
         raise gr.Error(f"解析失败：{str(e)}")
 
 
 def on_file_upload(file):
     """上传文件后：更新信息表格、轨道数量，并显示对应数量的参数组"""
-    df, instruments = parse_midi(file)
+    df = parse_midi(file)
     num_tracks = len(df)
     group_updates = []
     title_updates = []
@@ -97,7 +131,7 @@ def on_file_upload(file):
             title_updates.append(gr.update(value=f"### 轨道 {i} 参数"))
         else:
             title_updates.append(gr.update(value=""))
-    return [df, instruments] + group_updates + title_updates
+    return [df] + group_updates + title_updates
 
 
 def generate(file, num_tracks, *args):
@@ -119,7 +153,7 @@ def generate(file, num_tracks, *args):
                 "旋律X": int(args[ida + 9]),
                 "ADSR": list(args[ida + 10][2]),
                 "包络模式": str(args[ida + 11]),
-                "CC模式": str(args[ida + 12]),
+                "粒子特效": str(args[ida + 12]),
             }
         )
     midievent, max_tick = extrafunction.mcmappings(extrafunction.process_midi_file(file), 8)
@@ -254,8 +288,7 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
     with gr.Row():
         upload = gr.File(label="上传 MIDI 文件", file_types=[".mid", ".midi"], type="filepath")
 
-    info_df = gr.DataFrame(label="轨道基础信息", interactive=False)
-    state_instruments = gr.State()
+    info_df = gr.DataFrame(label="轨道基础信息", interactive=False, datatype=["number", "html", "number", "html", "html", "html"])
     state_num_tracks = gr.Number(value=0, visible=False)
 
     # 动态创建轨道参数组
@@ -273,14 +306,14 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
                 y_s = gr.Slider(label="DELAY Y", minimum=-48, maximum=48, step=1, value=0)  # delay轨上下位置
                 mainx_s = gr.Slider(label="旋律 X", minimum=-2, maximum=2, step=1, value=0)  # 旋律轨左右距离
                 mainy_s = gr.Slider(label="旋律 Y", minimum=-50, maximum=50, step=1, value=0)  # 旋律轨上下位置 ±48外不生成
-                timbre1_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色1", value=MC_PROGRAM_NAMES[6])
+                timbre1_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色1", value=MC_PROGRAM_NAMES[10])
             with gr.Accordion("高级选项", open=False):
-                with gr.Row(scale=0):
-                    envelope_r = gr.Radio(choices=["NONE", "ADSR"], label="包络模式", value="NONE")
-                    cc_r = gr.Radio(choices=["NONE", "CC1"], label="CC模式", value="NONE")
+                with gr.Row(scale=0, equal_height="true"):
+                    envelope_r = gr.Radio(choices=["NONE", "ADSR", "CC"], label="包络模式", value="NONE")
                     timbre2_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色2", value=MC_PROGRAM_NAMES[0])
                     timbre3_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色3", value=MC_PROGRAM_NAMES[0])
                     timbre4_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色4", value=MC_PROGRAM_NAMES[0])
+                    particle_f = gr.UploadButton(label="上传特效配置", file_types=[".json", ".mcfunction"], type="filepath")
                 with gr.Accordion("ADSR设置", open=False):
                     with gr.Row():
                         with gr.Column(scale=1):
@@ -308,13 +341,13 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
 
         track_groups.append(group)
         track_titles.append(title_md)
-        all_components.extend([x_s, y_s, mode_d, mainy_s, timbre1_d, timbre2_d, timbre3_d, timbre4_d, tmode_d, mainx_s, state_adsr, envelope_r, cc_r])
+        all_components.extend([x_s, y_s, mode_d, mainy_s, timbre1_d, timbre2_d, timbre3_d, timbre4_d, tmode_d, mainx_s, state_adsr, envelope_r, particle_f])
 
     generate_btn = gr.Button("生成", variant="primary")
     download_zip = gr.File(label="📦 下载 ZIP 文件", interactive=False)
 
     # 上传文件后更新
-    upload.change(fn=on_file_upload, inputs=upload, outputs=[info_df, state_instruments] + track_groups + track_titles).then(fn=lambda df: len(df), inputs=info_df, outputs=state_num_tracks)
+    upload.change(fn=on_file_upload, inputs=upload, outputs=[info_df] + track_groups + track_titles).then(fn=lambda df: len(df), inputs=info_df, outputs=state_num_tracks)
 
     # 生成按钮
     generate_btn.click(fn=generate, inputs=[upload] + [state_num_tracks] + all_components, outputs=download_zip)

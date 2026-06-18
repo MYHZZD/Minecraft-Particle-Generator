@@ -72,7 +72,7 @@ def linepath(a, n):
 
 # 标记包括音符标记track/note 位置标记right/left 生成时间标记summontick 统一标记
 def summon_note_block(dx, dy, dz, instrument, note_pitch, tags, summon_tick):
-    all_tags = tags + [f"summontick{summon_tick}", "siege"]
+    all_tags = tags + ["note", f"summontick{summon_tick}", "siege"]
     tags_json = "[" + ",".join(f'"{t}"' for t in all_tags) + "]"
 
     return (
@@ -137,7 +137,7 @@ def summon_repeater(dx, dy, dz, delay, track_id, struc_tick, tag_suffix):  # 生
         f"execute at @e[type=minecraft:block_display,tag=pig] run summon block_display "
         f'~{dx} ~{dy} ~{dz} {{block_state:{{Name:"minecraft:repeater",'
         f'Properties:{{powered:"false",delay:{delay},facing:"west"}}}},'
-        f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","repeater","{tag_suffix}","state0",'
+        f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","structure","repeater","{tag_suffix}","state0",'
         f'"summontick{struc_tick}","siege"],'
         f"transformation:[0.01f,0.00f,0.00f,0.495f,0.00f,0.01f,0.00f,0.495f,0.00f,0.00f,0.01f,{start_z}f,0.00f,0.00f,0.00f,1.00f]}}"
     )
@@ -146,7 +146,8 @@ def summon_repeater(dx, dy, dz, delay, track_id, struc_tick, tag_suffix):  # 生
 # 包络分支结构 不包括首尾 起点z轴不能为0
 def adsr_branch(dx, dy, dz, block_name, track_id, struc_tick, tag_suffix, length, mcfunction):
     start_z = 0.000 if dz > 0 else 0.990
-    for le in range(0, int(dz / abs(dz) * length), int(dz / abs(dz))):  # range(0,-5,-1)=[0,-1,-2,-3,-4]
+    for le in range(0, int(dz / abs(dz) * abs(length)), int(dz / abs(dz))):  # range(0,-5,-1)=[0,-1,-2,-3,-4]
+        le = int(le * length / abs(length))
         if le != 0:
             if block_name != "redstone_wire":
                 mcfunction[struc_tick].append(
@@ -161,7 +162,7 @@ def adsr_branch(dx, dy, dz, block_name, track_id, struc_tick, tag_suffix, length
                     f"execute at @e[type=minecraft:block_display,tag=pig] run summon block_display "
                     f'~{dx} ~{dy} ~{dz+le} {{block_state:{{Name:"minecraft:redstone_wire",'
                     f'Properties:{{power:"0",north:"side",south:"side"}}}},'
-                    f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","redstonewire","{tag_suffix}","state0",'
+                    f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","structure","redstonewire","{tag_suffix}","state0",'
                     f'"summontick{struc_tick}","siege"],'
                     f"transformation:[0.01f,0.00f,0.00f,0.495f,0.00f,0.01f,0.00f,0.495f,0.00f,0.00f,0.01f,{start_z}f,0.00f,0.00f,0.00f,1.00f]}}"
                 )
@@ -215,11 +216,27 @@ def gen(midievent, result, max_tick):
                 mainpos_y = linepath(mainy - note_point[1], summon_time)
                 mainpos_z = linepath(mainx, summon_time)
                 # 额外包络
-                if envelope_mode == "NONE":
+                if envelope_mode in ("NONE", "CC"):
                     adsr_n = [0 for _ in range(len(adsr))]
                 if envelope_mode == "ADSR":
                     adsr_n = adsr
                 env_z = [linepath(adsr_value, summon_time) for _, adsr_value in enumerate(adsr_n)]
+                # 专门处理cc
+                if envelope_mode == "CC":
+                    cc_list = [0] * (max_tick + 2 * len(adsr_n) + 1)  # 额外多两个adsr_n的长度防止最后一刻越界
+                    last_value = 64
+                    last_tick = 0
+                    for cc_event in track["cc_events"]:
+                        if cc_event["control"] == 1:
+                            # 填充从 last_tick 到当前 tick-1 的区间（使用上一个值）
+                            if cc_event["tick"] > last_tick:
+                                cc_list[last_tick : cc_event["tick"]] = [last_value] * (cc_event["tick"] - last_tick)
+                            # 当前 tick 设置新值
+                            cc_list[cc_event["tick"]] = cc_event["value"]
+                            last_value = cc_event["value"]
+                            last_tick = cc_event["tick"]
+                    # 填充末尾
+                    cc_list[last_tick : max_tick + 2 * len(adsr_n) + 1] = [last_value] * (max_tick + 2 * len(adsr_n) + 1 - last_tick)
 
                 have_note = {}  # 记录是否有音符盒，否则草方块占位。delay轨要考虑包络，储存 {位置:[垫块,包络]}
                 have_note_main = {}  # 旋律轨占位
@@ -232,6 +249,17 @@ def gen(midievent, result, max_tick):
                     # 例如"5-7 gold_block bell" split()[0]是八度，[1]是垫块，[2]是乐器
                     note_pitch = note_event["note"] - pitch_all[int(timbre_list[note_event["channel"]].split()[0].split("-")[0])]
                     note_instrument = timbre_list[note_event["channel"]].split()[2]
+                    # 用CC LIST迭代env_z偏移量
+                    if envelope_mode == "CC":
+                        # 从 k 开始，每隔 2 个取一个，长度截取到 env_z 所需大小
+                        adsr_n[:] = cc_list[k : k + 2 * len(env_z) : 2]
+                        # 将CC值映射为距离
+                        for idx, cc2env in enumerate(adsr_n):
+                            if cc2env % 4 < 2:  # 余数0和1往下，余数2和3往上
+                                adsr_n[idx] = -(int(math.floor(cc2env / 4)) - 16)
+                            else:
+                                adsr_n[idx] = -(int(math.floor(cc2env / 4)) + 1 - 16)
+                        env_z = [linepath(cc_value, summon_time) for _, cc_value in enumerate(adsr_n)]
 
                     for dur in range(note_duration):
                         if dur % 2 == 0:  # 2tick一个音符盒
@@ -362,7 +390,8 @@ def gen(midievent, result, max_tick):
         allfunc.append(f"execute as @e[type=minecraft:block_display,tag=pig] at @s run tp @s ~{player_speed} ~ ~")  # tp
         allfunc.append(f"execute as @e[type=minecraft:block_display,tag=rider] at @s run tp @s ~{player_speed} ~ ~")
         allfunc.append(f"execute as @e[tag=summontick{allfuncid}] run data merge entity @s {{start_interpolation:0,teleport_duration:1,interpolation_duration:1}}")  # 每个tick生成的实体配置过渡属性
-        allfunc.append(f"kill @e[tag=summontick{allfuncid-100}]")
+        allfunc.append(f"kill @e[tag=summontick{int(allfuncid-(start_delay/player_speed)-10)},tag=note]")
+        allfunc.append(f"kill @e[tag=summontick{int(allfuncid-(structure_point[0]/player_speed)-10)},tag=structure]")
 
     mcfunction[-1].append("ride @p dismount")
     mcfunction[-1].append("kill @e[tag=siege]")
