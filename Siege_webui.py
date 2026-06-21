@@ -1,5 +1,4 @@
 import gradio as gr
-import pretty_midi
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -214,15 +213,12 @@ def interpolate_curve(start, end, t, alpha):  # 定义插值函数
         return start + (end - start) * (t**alpha)
 
 
-def generate_envelope(attack_len, decay_len, sustain_level, release_len, decay_curve=0.0, release_curve=0.0):  # 核心包络计算
+def generate_envelope(attack_len, decay_len, sustain_level, release_len, decay_curve, release_curve):  # 核心包络计算
     attack_len, decay_len, release_len, sustain_len = adjust_lengths(attack_len, decay_len, release_len)
 
     attack_end = attack_len
     decay_end = attack_len + decay_len
     sustain_end = decay_end + sustain_len
-
-    decay_alpha = 5.0**decay_curve
-    release_alpha = 5.0**release_curve
 
     xs = list(range(peak_x + 1))  # 横坐标列表 0~peak_x 共peak_x+1个点
     ys = []
@@ -239,7 +235,7 @@ def generate_envelope(attack_len, decay_len, sustain_level, release_len, decay_c
                 y = sustain_level
             else:
                 t = (x - attack_end) / decay_len
-                y = interpolate_curve(peak_y, sustain_level, t, decay_alpha)
+                y = interpolate_curve(peak_y, sustain_level, t, 5**decay_curve)
         elif x <= sustain_end:
             y = sustain_level
         else:
@@ -247,7 +243,7 @@ def generate_envelope(attack_len, decay_len, sustain_level, release_len, decay_c
                 y = 0
             else:
                 t = (x - sustain_end) / release_len
-                y = interpolate_curve(sustain_level, 0, t, release_alpha)
+                y = interpolate_curve(sustain_level, 0, t, 5**release_curve)
 
         y = int(round(y))
         y = max(0, min(peak_y, y))
@@ -302,7 +298,7 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
             with gr.Row(scale=0):
                 mode_d = gr.Dropdown(label="结构模式", choices=[0, 1, 2, 3, 99], value=0, scale=0)
                 tmode_d = gr.Dropdown(label="特效模式", choices=[0, 1], value=0, scale=0)
-                x_s = gr.Slider(label="DELAY X", minimum=4, maximum=48, step=1, value=22)  # delay轨右侧距离 左侧依靠对称
+                x_s = gr.Slider(label="DELAY X", minimum=6, maximum=48, step=1, value=22)  # delay轨右侧距离 左侧依靠对称
                 y_s = gr.Slider(label="DELAY Y", minimum=-48, maximum=48, step=1, value=0)  # delay轨上下位置
                 mainx_s = gr.Slider(label="旋律 X", minimum=-2, maximum=2, step=1, value=0)  # 旋律轨左右距离
                 mainy_s = gr.Slider(label="旋律 Y", minimum=-50, maximum=50, step=1, value=0)  # 旋律轨上下位置 ±48外不生成
@@ -317,11 +313,11 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
                 with gr.Accordion("ADSR设置", open=False):
                     with gr.Row():
                         with gr.Column(scale=1):
-                            attack_slider = gr.Slider(0, peak_x + 1, value=0, step=1, label="Attack 长度")
-                            decay_slider = gr.Slider(0, peak_x + 1, value=32, step=1, label="Decay 长度")
-                            sustain_slider = gr.Slider(0, peak_y + 1, value=24, step=1, label="Sustain 电平")
-                            release_slider = gr.Slider(0, peak_x + 1, value=24, step=1, label="Release 长度")
-                            decay_curve_slider = gr.Slider(-1, 1, value=0, step=0.01, label="Decay 弯曲度")
+                            attack_slider = gr.Slider(0, peak_x, value=0, step=1, label="Attack 长度")
+                            decay_slider = gr.Slider(0, peak_x, value=32, step=1, label="Decay 长度")
+                            sustain_slider = gr.Slider(0, peak_y, value=32, step=1, label="Sustain 电平")
+                            release_slider = gr.Slider(0, peak_x, value=24, step=1, label="Release 长度")
+                            decay_curve_slider = gr.Slider(-1, 1, value=-0.5, step=0.01, label="Decay 弯曲度")
                             release_curve_slider = gr.Slider(-1, 1, value=0, step=0.01, label="Release 弯曲度")
 
                         with gr.Column(scale=2):
