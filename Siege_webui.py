@@ -136,25 +136,49 @@ def on_file_upload(file):
 def generate(file, num_tracks, *args):
     results = []
     for i in range(num_tracks):
-        ida = i * 13
+        base = i * 18  # 18个参数，修改别忘了config load
+        X = int(args[base])
+        Y = int(args[base + 1])
+        mode = int(args[base + 2])
+        effect_mode = int(args[base + 3])
+        melodyX = int(args[base + 4])
+        melodyY = int(args[base + 5])
+        timbre1 = str(args[base + 6])
+        timbre2 = str(args[base + 7])
+        timbre3 = str(args[base + 8])
+        timbre4 = str(args[base + 9])
+        attack = int(args[base + 10])
+        decay = int(args[base + 11])
+        sustain = int(args[base + 12])
+        release = int(args[base + 13])
+        decay_curve = float(args[base + 14])
+        release_curve = float(args[base + 15])
+        envelope_mode = str(args[base + 16])
+        particle_file = str(args[base + 17]) if args[base + 17] else ""
+
+        # 实时计算包络数组
+        _,_,adsr_curve = generate_envelope(attack, decay, sustain, release, decay_curve, release_curve)
+
         results.append(
             {
-                "轨道索引": int(i),
-                "X": int(args[ida]),
-                "Y": int(args[ida + 1]),
-                "结构模式": int(args[ida + 2]),
-                "旋律Y": int(args[ida + 3]),
-                "音色1": str(args[ida + 4]),
-                "音色2": str(args[ida + 5]),
-                "音色3": str(args[ida + 6]),
-                "音色4": str(args[ida + 7]),
-                "特效模式": int(args[ida + 8]),
-                "旋律X": int(args[ida + 9]),
-                "ADSR": list(args[ida + 10][2]),
-                "包络模式": str(args[ida + 11]),
-                "粒子特效": str(args[ida + 12]),
+                "轨道索引": i,
+                "X": X,
+                "Y": Y,
+                "结构模式": mode,
+                "特效模式": effect_mode,
+                "旋律X": melodyX,
+                "旋律Y": melodyY,
+                "音色1": timbre1,
+                "音色2": timbre2,
+                "音色3": timbre3,
+                "音色4": timbre4,
+                "ADSR": list(adsr_curve),
+                "包络模式": envelope_mode,
+                "粒子特效": particle_file,
+                "ADSR_params": {"attack": attack, "decay": decay, "sustain": sustain, "release": release, "decay_curve": decay_curve, "release_curve": release_curve},
             }
         )
+
     midievent, max_tick = extrafunction.mcmappings(extrafunction.process_midi_file(file), 8)
     mcfunction = siegefunc.gen(midievent, results, max_tick)
 
@@ -277,6 +301,45 @@ def plot_envelope(sustain, xy):  # 绘图函数
     return fig
 
 
+def load_config(file):  # 加载配置
+    if not file:
+        raise gr.Error("请上传有效的 config.json 文件")
+    with open(file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    num_config = len(data)
+    updates = []
+    for i in range(MAX_TRACKS):
+        if i < num_config:
+            cfg = data[i]
+            track_updates = [
+                gr.update(value=cfg.get("X", 22)),
+                gr.update(value=cfg.get("Y", 0)),
+                gr.update(value=cfg.get("结构模式", 0)),
+                gr.update(value=cfg.get("特效模式", 0)),
+                gr.update(value=cfg.get("旋律X", 0)),
+                gr.update(value=cfg.get("旋律Y", 0)),
+                gr.update(value=cfg.get("音色1", MC_PROGRAM_NAMES[10])),
+                gr.update(value=cfg.get("音色2", MC_PROGRAM_NAMES[0])),
+                gr.update(value=cfg.get("音色3", MC_PROGRAM_NAMES[0])),
+                gr.update(value=cfg.get("音色4", MC_PROGRAM_NAMES[0])),
+                gr.update(value=cfg.get("ADSR_params", {}).get("attack", 0)),
+                gr.update(value=cfg.get("ADSR_params", {}).get("decay", 32)),
+                gr.update(value=cfg.get("ADSR_params", {}).get("sustain", 32)),
+                gr.update(value=cfg.get("ADSR_params", {}).get("release", 24)),
+                gr.update(value=cfg.get("ADSR_params", {}).get("decay_curve", -0.5)),
+                gr.update(value=cfg.get("ADSR_params", {}).get("release_curve", 0)),
+                gr.update(value=cfg.get("包络模式", "NONE")),
+                gr.update(),# 粒子特效不更新
+            ]
+        else:
+            # config中不存在的轨道，保持当前状态
+            track_updates = [gr.update() for _ in range(18)]  # 每个轨道18个控件
+        updates.extend(track_updates)
+
+    return updates
+
+
 # 构建界面
 with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=True) as demo:
     gr.Markdown("# 🎵 MIDI 轨道配置")
@@ -337,9 +400,14 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
 
         track_groups.append(group)
         track_titles.append(title_md)
-        all_components.extend([x_s, y_s, mode_d, mainy_s, timbre1_d, timbre2_d, timbre3_d, timbre4_d, tmode_d, mainx_s, state_adsr, envelope_r, particle_f])
+        all_components.extend([x_s, y_s, mode_d, tmode_d, mainx_s, mainy_s])  # 位置&结构&模式
+        all_components.extend([timbre1_d, timbre2_d, timbre3_d, timbre4_d])  # 音色
+        all_components.extend([attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider])  # ADSR
+        all_components.extend([envelope_r, particle_f])  # 包络模式 & 粒子特效文件
 
-    generate_btn = gr.Button("生成", variant="primary")
+    with gr.Row():
+        config_upload = gr.UploadButton(label="上传 config.json", file_types=[".json"], type="filepath")
+        generate_btn = gr.Button("生成", variant="primary")
     download_zip = gr.File(label="📦 下载 ZIP 文件", interactive=False)
 
     # 上传文件后更新
@@ -347,6 +415,9 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
 
     # 生成按钮
     generate_btn.click(fn=generate, inputs=[upload] + [state_num_tracks] + all_components, outputs=download_zip)
+
+    # 加载配置
+    config_upload.upload(fn=load_config, inputs=config_upload, outputs=all_components)
 
 
 if __name__ == "__main__":

@@ -100,13 +100,15 @@ def move_note_entity(tag, pig_offset_x, pig_offset_y, pig_offset_z, target_x, ta
 
 
 # 激活音符盒 考虑player speed
-def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre):
+def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre, mainy=0):
     if loctag in ("mainright", "mainleft"):
         power_delay = 0
     elif loctag == "left":
         power_delay = 1
     elif loctag == "right":
         power_delay = 2
+    if abs(mainy) > 48:
+        power_delay -= 1
     # 在time时刻放下的音符盒，在距离(start_delay)/速度=时间后激活。power delay是定值
     mcfunction[time + pos2time(start_delay) + power_delay].append(
         f'execute as @e[type=minecraft:block_display,tag=summontick{time},tag={tag},tag={loctag}] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
@@ -124,8 +126,8 @@ def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre):
     )
 
 
-# 标记包括类型标记track/structure 位置标记right/left 生成时间标记summontick 动态标记state0 统一标记
-def summon_structure(dx, dy, dz, block_name, track_id, struc_tick, tag_suffix):  # 生成轨道
+# 标记包括类型标记track/structure 位置标记right/left 生成时间标记summontick 动态标记state0 统一标记 旋律轨存在标记hasmain
+def summon_structure(dx, dy, dz, block_name, track_id, struc_tick, tag_suffix, hasmain="hasmain"):  # 生成轨道
     if dz == 0:
         start_z = 0.495
     else:
@@ -133,14 +135,14 @@ def summon_structure(dx, dy, dz, block_name, track_id, struc_tick, tag_suffix): 
     return (
         f"execute at @e[type=minecraft:block_display,tag=pig] run summon block_display "
         f'~{dx} ~{dy} ~{dz} {{block_state:{{Name:"minecraft:{block_name}"}},'
-        f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","structure","{tag_suffix}","state0",'
+        f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","structure","{tag_suffix}","{hasmain}","state0",'
         f'"summontick{struc_tick}","siege"],'
         f"transformation:[0.01f,0.00f,0.00f,0.495f,0.00f,0.01f,0.00f,0.495f,0.00f,0.00f,0.01f,{start_z}f,0.00f,0.00f,0.00f,1.00f]}}"
     )
 
 
-# 标记包括类型标记track/repeater 位置标记right/left 生成时间标记summontick 动态标记state0 统一标记
-def summon_repeater(dx, dy, dz, delay, facing, track_id, struc_tick, tag_suffix):  # 生成中继器 facing是屁股方向
+# 标记包括类型标记track/repeater 位置标记right/left 生成时间标记summontick 动态标记state0 统一标记 旋律轨存在标记hasmain
+def summon_repeater(dx, dy, dz, delay, facing, track_id, struc_tick, tag_suffix, hasmain="hasmain"):  # 生成中继器 facing是屁股方向
     if dz == 0:
         start_z = 0.495
     else:
@@ -156,7 +158,7 @@ def summon_repeater(dx, dy, dz, delay, facing, track_id, struc_tick, tag_suffix)
         f"execute at @e[type=minecraft:block_display,tag=pig] run summon block_display "
         f'~{dx} ~{dy} ~{dz} {{block_state:{{Name:"minecraft:repeater",'
         f'Properties:{{powered:"false",delay:"{delay}",facing:{face}}}}},'
-        f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","structure","repeater","{tag_suffix}","state0",'
+        f'brightness:{{block:0,sky:15}},Tags:["track{track_id}","structure","repeater","{tag_suffix}","{hasmain}","state0",'
         f'"summontick{struc_tick}","siege"],'
         f"transformation:[0.01f,0.00f,0.00f,0.495f,0.00f,0.01f,0.00f,0.495f,0.00f,0.00f,0.01f,{start_z}f,0.00f,0.00f,0.00f,1.00f]}}"
     )
@@ -327,10 +329,10 @@ def gen(midievent, result, max_tick):
                             if track_mode in (0, 2, 3):  # 基础对称轨 左右分轨
                                 if track_mode in (0, 3):  # 基础对称轨 右分轨
                                     mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "right"], k + dur))
-                                    power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument)  # 这个要折算
+                                    power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy)  # 传参mainy,应对无旋律轨的延迟
                                 if track_mode in (0, 2):  # 基础对称轨 左分轨
                                     mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "left"], k + dur))
-                                    power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument)
+                                    power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy)
                             # 标记该位置为已生成 x方向：[垫块,包络]。这里的start delay是距离量，不需要折算
                             have_note[time2pos(k) + time2pos(dur) + start_delay] = [timbre_list[note_event["channel"]].split()[1], adsr_n[int(dur / 2)]]  # +start_delay的意义是在k+dur时刻生成的音符会落在前方start_delay处
                             # 旋律
@@ -396,6 +398,9 @@ def gen(midievent, result, max_tick):
 
                 cross_note = create_cross_note()  # 重置
 
+                # 判断旋律轨是否存在，存在则左右delay延迟为12，不存在则左右delay延迟为01
+                has_main = "hasmain" if (track_mode in (1, 2, 3) or (track_mode == 0 and abs(mainy) <= 48)) else "nomain"
+
                 # 轨道生成
                 for struc_tick, _ in enumerate(mcfunction):
                     if struc_tick <= max_tick + pos2time(start_delay - structure_point[0]):  # 最后一个方块生成
@@ -439,24 +444,24 @@ def gen(midievent, result, max_tick):
 
                         if track_mode in (0, 3):  # 基础对称轨 右分轨
                             if bottom_block[1] == 0:  # 没有音或者包络为0
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, bottom_block[0], i, struc_tick, "right"))
+                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, bottom_block[0], i, struc_tick, "right", has_main))
                             else:  # 包络不为0,一定有音
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, "dirt", i, struc_tick, "right"))  # 轨道上生成土块
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz + bottom_block[1], bottom_block[0], i, struc_tick, "right"))  # 偏移生成垫块
+                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, "dirt", i, struc_tick, "right", has_main))  # 轨道上生成土块
+                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz + bottom_block[1], bottom_block[0], i, struc_tick, "right", has_main))  # 偏移生成垫块
                                 adsr_branch(ox, oy - 1, oz, "grass_block", i, struc_tick, "right", bottom_block[1], mcfunction)  # 生成包络分支
                                 adsr_branch(ox, oy, oz, "redstone_wire", i, struc_tick, "right", bottom_block[1], mcfunction)  # 生成包络红石线
                             if spawn_top:  # 上层，避让音符盒
-                                mcfunction[struc_tick].append(summon_structure(ox, oy, oz, "grass_block", i, struc_tick, "right"))
+                                mcfunction[struc_tick].append(summon_structure(ox, oy, oz, "grass_block", i, struc_tick, "right", has_main))
                         if track_mode in (0, 2):  # 基础对称轨 左分轨
                             if bottom_block[1] == 0:
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, bottom_block[0], i, struc_tick, "left"))
+                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, bottom_block[0], i, struc_tick, "left", has_main))
                             else:
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, "dirt", i, struc_tick, "left"))
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz - bottom_block[1], bottom_block[0], i, struc_tick, "left"))
+                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, "dirt", i, struc_tick, "left", has_main))
+                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz - bottom_block[1], bottom_block[0], i, struc_tick, "left", has_main))
                                 adsr_branch(ox, oy - 1, -oz, "grass_block", i, struc_tick, "left", bottom_block[1], mcfunction)
                                 adsr_branch(ox, oy, -oz, "redstone_wire", i, struc_tick, "left", bottom_block[1], mcfunction)
                             if spawn_top:
-                                mcfunction[struc_tick].append(summon_structure(ox, oy, -oz, "grass_block", i, struc_tick, "left"))
+                                mcfunction[struc_tick].append(summon_structure(ox, oy, -oz, "grass_block", i, struc_tick, "left", has_main))
                         if track_mode in (1, 2, 3) or track_mode == 0 and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
                             mcfunction[struc_tick].append(summon_structure(oxm, mainy - 1, ozm, bottom_block_main, i, struc_tick, "mainright"))
                             if spawn_top_main:
@@ -489,9 +494,9 @@ def gen(midievent, result, max_tick):
 
                         if struc_tick % 2 != 0:  # 与音符错开
                             if track_mode in (0, 3):  # 基础对称轨 右分轨
-                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, track_x + oz, delay, facing, i, struc_tick, "right"))
+                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, track_x + oz, delay, facing, i, struc_tick, "right", has_main))
                             if track_mode in (0, 2):  # 基础对称轨 左分轨
-                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, -track_x - oz, delay, facing, i, struc_tick, "left"))
+                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, -track_x - oz, delay, facing, i, struc_tick, "left", has_main))
                             if track_mode in (1, 2, 3) or track_mode == 0 and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
                                 mcfunction[struc_tick].append(summon_repeater(structure_point[0] - oxm, mainy, mainx + ozm, delay, facingm, i, struc_tick, "main"))
                             if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
@@ -505,17 +510,31 @@ def gen(midievent, result, max_tick):
                     f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=main] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
                 )
                 mcfunction[power_tick + pos2time(structure_point[0]) + 2].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
                 )
                 mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                )
+                # 无旋律轨延迟减一
+                mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                )
+                mcfunction[power_tick + pos2time(structure_point[0]) + 0].append(
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
                 )
             if power_tick % 2 == 0:  # 红石线 和音符同步
                 mcfunction[power_tick + pos2time(structure_point[0]) + 2].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
                 )
                 mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                )
+                # 无旋律轨延迟减一
+                mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                )
+                mcfunction[power_tick + pos2time(structure_point[0]) + 0].append(
+                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
                 )
 
     for allfuncid, allfunc in enumerate(mcfunction):
