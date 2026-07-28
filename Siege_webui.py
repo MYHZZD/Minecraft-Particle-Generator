@@ -25,7 +25,7 @@ def midi_to_note_name(midi_note, use_flats=False):
     use_flats若为True使用降号表示,否则使用升号表示
     """
     if not 0 <= midi_note <= 127:
-        raise ValueError(f"MIDI 编号必须在 0-127 之间，实际为 {midi_note}")
+        raise ValueError(f"MIDI 编号必须在 0-127 之间,实际为 {midi_note}")
 
     # 12 个半音的音名列表(升号版和降号版)
     note_names_sharp = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -48,7 +48,7 @@ def recommend_range(low, high):
                 right = mid
         return left
 
-    pitch_all = [6, 18, 30, 42, 54, 66, 78, 90, 102, 114, 126]  # pitch_all[0]对应F#-1，因此角标要-1输出
+    pitch_all = [6, 18, 30, 42, 54, 66, 78, 90, 102, 114, 126]  # pitch_all[0]对应F#-1,因此角标要-1输出
     minleft = binary_search_insert_pos(low, pitch_all)
     maxright = binary_search_insert_pos(high, pitch_all)
     return f"F#{minleft-2}-F#{maxright-1}"
@@ -118,7 +118,7 @@ def parse_midi(file_path):
 
 
 def on_file_upload(file):
-    """上传文件后：更新信息表格、轨道数量，并显示对应数量的参数组"""
+    """上传文件后：更新信息表格、轨道数量,并显示对应数量的参数组"""
     df = parse_midi(file)
     num_tracks = len(df)
     group_updates = []
@@ -136,7 +136,7 @@ def on_file_upload(file):
 def generate(file, num_tracks, *args):
     results = []
     for i in range(num_tracks):
-        base = i * 18  # 18个参数，修改别忘了config load
+        base = i * 18  # 18个参数,修改别忘了config load
         X = int(args[base])
         Y = int(args[base + 1])
         mode = int(args[base + 2])
@@ -157,7 +157,7 @@ def generate(file, num_tracks, *args):
         particle_file = str(args[base + 17]) if args[base + 17] else ""
 
         # 实时计算包络数组
-        _,_,adsr_curve = generate_envelope(attack, decay, sustain, release, decay_curve, release_curve)
+        _, _, adsr_curve = generate_envelope(attack, decay, sustain, release, decay_curve, release_curve)
 
         results.append(
             {
@@ -330,10 +330,10 @@ def load_config(file):  # 加载配置
                 gr.update(value=cfg.get("ADSR_params", {}).get("decay_curve", -0.5)),
                 gr.update(value=cfg.get("ADSR_params", {}).get("release_curve", 0)),
                 gr.update(value=cfg.get("包络模式", "NONE")),
-                gr.update(),# 粒子特效不更新
+                gr.update(),  # 粒子特效不更新
             ]
         else:
-            # config中不存在的轨道，保持当前状态
+            # config中不存在的轨道,保持当前状态
             track_updates = [gr.update() for _ in range(18)]  # 每个轨道18个控件
         updates.extend(track_updates)
 
@@ -353,14 +353,14 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
     # 动态创建轨道参数组
     track_groups = []
     track_titles = []
-    all_components = []  # 存储所有参数，用于生成回调
+    all_components = []  # 存储所有参数,用于生成回调
 
     for i in range(MAX_TRACKS):
         with gr.Group(visible=False) as group:
             title_md = gr.Markdown(f"### 轨道 {i} 参数")
             with gr.Row(scale=0):
-                mode_d = gr.Dropdown(label="结构模式", choices=[0, 1, 2, 3, 99], value=0, scale=0)
-                tmode_d = gr.Dropdown(label="特效模式", choices=[0, 1], value=0, scale=0)
+                mode_d = gr.Dropdown(label="结构模式", choices=[0, 1, 2, 3], value=0, scale=0)
+                tmode_d = gr.Dropdown(label="特效模式", choices=[0, 1, 99], value=0, scale=0)
                 x_s = gr.Slider(label="DELAY X", minimum=6, maximum=48, step=1, value=22)  # delay轨右侧距离 左侧依靠对称
                 y_s = gr.Slider(label="DELAY Y", minimum=-48, maximum=48, step=1, value=0)  # delay轨上下位置
                 mainx_s = gr.Slider(label="旋律 X", minimum=-2, maximum=2, step=1, value=0)  # 旋律轨左右距离
@@ -389,10 +389,10 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
                     # 创建隐形容器暂存adsr列表
                     state_adsr = gr.State()
 
-                    # 所有滑块绑定 release 事件，即时更新图表
+                    # 所有滑块绑定 release 事件,即时更新图表
                     all_adsr_inputs = [attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider]
 
-                    for slider in all_adsr_inputs:  # 先传参到state缓存，再输入图表
+                    for slider in all_adsr_inputs:  # 先传参到state缓存,再输入图表
                         slider.release(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
 
                     # 页面加载时绘制默认曲线
