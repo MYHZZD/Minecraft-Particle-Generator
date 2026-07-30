@@ -8,9 +8,14 @@ import time
 import zipfile
 import tempfile
 import io
+import math
 import siegedata
 import siegefunc
 import extrafunction
+from matplotlib.patches import Rectangle
+from matplotlib.collections import PatchCollection
+from matplotlib.lines import Line2D
+from functools import lru_cache
 
 MAX_TRACKS = siegedata.MAX_TRACKS
 GM_PROGRAM_NAMES = siegedata.GM_PROGRAM_NAMES
@@ -340,70 +345,201 @@ def load_config(file):  # 加载配置
     return updates
 
 
+def map_coordinate(moded, envelope, x, y, mx, my):  # 位置图计算 返回位置列表
+    coords = []
+    if abs(my) <= 48:  # 有旋律轨
+        if mx == 0:
+            coords.append((mx, my))
+            coords.append((mx, my + 1))
+        else:
+            coords.append((mx, my))
+            coords.append((mx, my + 1))
+            coords.append((-mx, my))
+            coords.append((-mx, my + 1))
+    if moded != 1:  # 不是纯旋律轨
+        if moded in (0, 2):  # left
+            coords.append((-x, y))
+            coords.append((-x, y + 1))
+        if moded in (0, 3):  # right
+            coords.append((x, y))
+            coords.append((x, y + 1))
+
+    return coords
+
+
+def draw_position_grid(moded, envelope_r, xs, ys, mxs, mys):  # 位置图绘制
+    fig, ax = plt.subplots(figsize=(12, 12))
+    ax.set_xlim(-48, 48)
+    ax.set_ylim(-48, 48)
+    ax.set_aspect("equal")  # 强制等比例，保证网格正方形
+    # 主要刻度
+    ax.set_xticks(np.arange(-40, 50, 10))
+    ax.set_yticks(np.arange(-40, 50, 10))
+    # 次要刻度（每1个单位）仅网格线，不显示标签
+    ax.set_xticks(np.arange(-48, 49, 1), minor=True)
+    ax.set_yticks(np.arange(-48, 49, 1), minor=True)
+    # 网格线
+    ax.grid(True, which="minor", linestyle="-", linewidth=0.4, alpha=0.4, color="gray")
+    ax.grid(True, which="major", linestyle="--", linewidth=0.6, alpha=0.6, color="black")
+    # 中心十字线
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+
+    legend_elements = []  # 收集图例
+    # 方块位置
+    rectangles = []  # 收集点图
+    for i, (m, e, x, y, mx, my) in enumerate(zip(moded, envelope_r, xs, ys, mxs, mys)):
+        coords = map_coordinate(m, e, x, y, mx, my)
+        color = channel_colors[i % len(channel_colors)]
+        for x, y in coords:
+            rect = Rectangle(xy=(x - 0.5, y - 0.5), width=1.0, height=1.0, facecolor=color, edgecolor=color)
+            rectangles.append(rect)
+        legend_elements.append(Line2D([0], [0], marker="s", color="#FFFFFF", label=f"TRACK{i}", markerfacecolor=color, markersize=10))
+    # 音量圆
+    for v, a in enumerate([47, 45, 43, 41, 38, 34, 29, 23, 15]):
+        points = get_minecraft_circle(a)
+        points.append(points[0])
+        vol = (v + 1) * 10
+        color = channel_colors[v % len(channel_colors)]
+        for x, y in points:
+            rect = Rectangle(xy=(x - 0.3, y - 0.3), width=0.6, height=0.6, facecolor=color, edgecolor=color, alpha=0.6)
+            rectangles.append(rect)
+        legend_elements.append(Line2D([0], [0], marker="s", color="#FFFFFF", label=f"VOLUME{vol}%", markerfacecolor=color, markersize=7))
+    if rectangles:  # 添加进图表
+        pc = PatchCollection(rectangles, match_original=True)
+        ax.add_collection(pc)
+    ax.legend(handles=legend_elements, loc="upper left", fontsize=8, bbox_to_anchor=(1, 1))  # 添加图例
+    plt.tight_layout()
+    return fig
+
+
+@lru_cache(maxsize=None)  # 启用缓存
+def get_minecraft_circle(a):  # 生成 Bresenham 连续像素圆
+    a = int(abs(a))
+    if a == 0:
+        return [(0, 0)]
+
+    points = []
+    x = 0
+    y = a
+    d = 1 - a  # 决策参数（或使用 3 - 2*a，效果相同）
+
+    # 利用八分对称性，每次添加 8 个对称点
+    def add_symmetric_points(cx, cy):
+        # 添加以 (0,0) 为中心的 8 个对称点
+        pts = [(cx, cy), (cy, cx), (cy, -cx), (cx, -cy), (-cx, -cy), (-cy, -cx), (-cy, cx), (-cx, cy)]
+        # 去重（处理 cx=cy 或 cx=0 的情况）
+        for p in pts:
+            if p not in points:  # 小半径时去重避免重复
+                points.append(p)
+
+    while x <= y:
+        add_symmetric_points(x, y)
+        if d < 0:
+            d += 2 * x + 3
+        else:
+            d += 2 * (x - y) + 5
+            y -= 1
+        x += 1
+
+    # 按角度顺时针排序，方便绘图连线（避免乱序交叉）
+    points.sort(key=lambda p: (math.atan2(p[1], p[0]) + math.pi))  # 从 -π 到 π 排序
+    return points
+
+
+def update_position(*args):
+    """
+    参数：各轨道[mode_d, envelope_r, x_s, y_s, mainx_s, mainy_s] 最后一个state_num_tracks
+    """
+    num_tracks = int(args[-1])
+    slider_vals = args[:-1]
+    if num_tracks == 0:
+        return gr.update(visible=False)  # 隐藏位置图
+
+    moded, envelope_r, xs, ys, mxs, mys = [], [], [], [], [], []
+    for i in range(num_tracks):
+        base = i * 6
+        moded.append(slider_vals[base])
+        envelope_r.append(slider_vals[base + 1])
+        xs.append(slider_vals[base + 2])
+        ys.append(slider_vals[base + 3])
+        mxs.append(slider_vals[base + 4])
+        mys.append(slider_vals[base + 5])
+    fig = draw_position_grid(moded, envelope_r, xs, ys, mxs, mys)
+    return gr.update(value=fig, visible=True)
+
+
 # 构建界面
-with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=True) as demo:
-    gr.Markdown("# 🎵 MIDI 轨道配置")
+with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=True, fill_height=True) as demo:
+    # gr.Markdown("# 🎵 MIDI 轨道配置")
 
-    with gr.Row():
-        upload = gr.File(label="上传 MIDI 文件", file_types=[".mid", ".midi"], type="filepath")
+    upload = gr.UploadButton(label="🎵 上传 MIDI 文件", file_types=[".mid", ".midi"], type="filepath")
+    info_df = gr.DataFrame(label="轨道基础信息", interactive=False, datatype=["number", "html", "number", "html", "html", "html"], max_height="20vh")
 
-    info_df = gr.DataFrame(label="轨道基础信息", interactive=False, datatype=["number", "html", "number", "html", "html", "html"])
     state_num_tracks = gr.Number(value=0, visible=False)
 
     # 动态创建轨道参数组
     track_groups = []
     track_titles = []
     all_components = []  # 存储所有参数,用于生成回调
+    slider_inputs = []  # 位置图输入
 
-    for i in range(MAX_TRACKS):
-        with gr.Group(visible=False) as group:
-            title_md = gr.Markdown(f"### 轨道 {i} 参数")
-            with gr.Row(scale=0):
-                mode_d = gr.Dropdown(label="结构模式", choices=[0, 1, 2, 3], value=0, scale=0)
-                tmode_d = gr.Dropdown(label="特效模式", choices=[0, 1, 99], value=0, scale=0)
-                x_s = gr.Slider(label="DELAY X", minimum=6, maximum=48, step=1, value=22)  # delay轨右侧距离 左侧依靠对称
-                y_s = gr.Slider(label="DELAY Y", minimum=-48, maximum=48, step=1, value=0)  # delay轨上下位置
-                mainx_s = gr.Slider(label="旋律 X", minimum=-2, maximum=2, step=1, value=0)  # 旋律轨左右距离
-                mainy_s = gr.Slider(label="旋律 Y", minimum=-50, maximum=50, step=1, value=0)  # 旋律轨上下位置 ±48外不生成
-                timbre1_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色1", value=MC_PROGRAM_NAMES[10])
-            with gr.Accordion("高级选项", open=False):
-                with gr.Row(scale=0, equal_height="true"):
-                    envelope_r = gr.Radio(choices=["NONE", "ADSR", "CC"], label="包络模式", value="NONE")
-                    timbre2_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色2", value=MC_PROGRAM_NAMES[0])
-                    timbre3_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色3", value=MC_PROGRAM_NAMES[0])
-                    timbre4_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色4", value=MC_PROGRAM_NAMES[0])
-                    particle_f = gr.UploadButton(label="上传特效配置", file_types=[".json", ".mcfunction"], type="filepath")
-                with gr.Accordion("ADSR设置", open=False):
-                    with gr.Row():
-                        with gr.Column(scale=1):
-                            attack_slider = gr.Slider(0, peak_x, value=0, step=1, label="Attack 长度")
-                            decay_slider = gr.Slider(0, peak_x, value=32, step=1, label="Decay 长度")
-                            sustain_slider = gr.Slider(0, peak_y, value=32, step=1, label="Sustain 电平")
-                            release_slider = gr.Slider(0, peak_x, value=24, step=1, label="Release 长度")
-                            decay_curve_slider = gr.Slider(-1, 1, value=-0.5, step=0.01, label="Decay 弯曲度")
-                            release_curve_slider = gr.Slider(-1, 1, value=0, step=0.01, label="Release 弯曲度")
+    with gr.Tabs():
+        with gr.TabItem("基础设置"):
+            for i in range(MAX_TRACKS):
+                dynamic_y = ((i + 1) // 2) * 3 * ((-1) ** (i + 1))  # 0 3 -3 6 -6 ......
+                with gr.Group(visible=False) as group:
+                    title_md = gr.Markdown(f"### 轨道 {i} 参数")
+                    with gr.Row(scale=0):
+                        mode_d = gr.Dropdown(label="结构模式", choices=[0, 1, 2, 3], value=0, scale=0)
+                        tmode_d = gr.Dropdown(label="特效模式", choices=[0, 1, 99], value=0, scale=0)
+                        x_s = gr.Slider(label="DELAY X", minimum=6, maximum=48, step=1, value=22)  # delay轨右侧距离 左侧依靠对称
+                        y_s = gr.Slider(label="DELAY Y", minimum=-48, maximum=48, step=1, value=dynamic_y)  # delay轨上下位置
+                        mainx_s = gr.Slider(label="旋律 X", minimum=-2, maximum=2, step=1, value=0)  # 旋律轨左右距离
+                        mainy_s = gr.Slider(label="旋律 Y", minimum=-50, maximum=50, step=1, value=dynamic_y)  # 旋律轨上下位置 ±48外不生成
+                        timbre1_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色1", value=MC_PROGRAM_NAMES[10])
+                    with gr.Accordion("高级选项", open=False):
+                        with gr.Row(scale=0, equal_height="true"):
+                            envelope_r = gr.Radio(choices=["NONE", "ADSR", "CC"], label="包络模式", value="NONE")
+                            timbre2_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色2", value=MC_PROGRAM_NAMES[0])
+                            timbre3_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色3", value=MC_PROGRAM_NAMES[0])
+                            timbre4_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色4", value=MC_PROGRAM_NAMES[0])
+                            particle_f = gr.UploadButton(label="上传特效配置", file_types=[".json", ".mcfunction"], type="filepath")
+                        with gr.Accordion("ADSR设置", open=False):
+                            with gr.Row():
+                                with gr.Column(scale=1):
+                                    attack_slider = gr.Slider(0, peak_x, value=0, step=1, label="Attack 长度")
+                                    decay_slider = gr.Slider(0, peak_x, value=32, step=1, label="Decay 长度")
+                                    sustain_slider = gr.Slider(0, peak_y, value=32, step=1, label="Sustain 电平")
+                                    release_slider = gr.Slider(0, peak_x, value=24, step=1, label="Release 长度")
+                                    decay_curve_slider = gr.Slider(-1, 1, value=-0.5, step=0.01, label="Decay 弯曲度")
+                                    release_curve_slider = gr.Slider(-1, 1, value=0, step=0.01, label="Release 弯曲度")
+                                with gr.Column(scale=2):
+                                    plot_output = gr.Plot(label="包络示意图")
 
-                        with gr.Column(scale=2):
-                            plot_output = gr.Plot(label="包络示意图")
+                            # 创建隐形容器暂存adsr列表
+                            state_adsr = gr.State()
 
-                    # 创建隐形容器暂存adsr列表
-                    state_adsr = gr.State()
+                            # 所有滑块绑定 release 事件,即时更新图表
+                            all_adsr_inputs = [attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider]
 
-                    # 所有滑块绑定 release 事件,即时更新图表
-                    all_adsr_inputs = [attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider]
+                            for slider in all_adsr_inputs:  # 先传参到state缓存,再输入图表
+                                slider.release(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
 
-                    for slider in all_adsr_inputs:  # 先传参到state缓存,再输入图表
-                        slider.release(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
+                            # 页面加载时绘制默认曲线
+                            demo.load(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
 
-                    # 页面加载时绘制默认曲线
-                    demo.load(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
-
-        track_groups.append(group)
-        track_titles.append(title_md)
-        all_components.extend([x_s, y_s, mode_d, tmode_d, mainx_s, mainy_s])  # 位置&结构&模式
-        all_components.extend([timbre1_d, timbre2_d, timbre3_d, timbre4_d])  # 音色
-        all_components.extend([attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider])  # ADSR
-        all_components.extend([envelope_r, particle_f])  # 包络模式 & 粒子特效文件
+                track_groups.append(group)
+                track_titles.append(title_md)
+                all_components.extend([x_s, y_s, mode_d, tmode_d, mainx_s, mainy_s])  # 位置&结构&模式
+                all_components.extend([timbre1_d, timbre2_d, timbre3_d, timbre4_d])  # 音色
+                all_components.extend([attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider])  # ADSR
+                all_components.extend([envelope_r, particle_f])  # 包络模式 & 粒子特效文件
+                slider_inputs.extend([mode_d, envelope_r, x_s, y_s, mainx_s, mainy_s])
+        with gr.TabItem("轨道位置图"):
+            position_plot = gr.Plot(visible=False)
 
     with gr.Row():
         config_upload = gr.UploadButton(label="上传 config.json", file_types=[".json"], type="filepath")
@@ -416,8 +552,20 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
     # 生成按钮
     generate_btn.click(fn=generate, inputs=[upload] + [state_num_tracks] + all_components, outputs=download_zip)
 
-    # 加载配置
-    config_upload.upload(fn=load_config, inputs=config_upload, outputs=all_components)
+    # 加载配置 更新位置图
+    config_upload.upload(fn=load_config, inputs=config_upload, outputs=all_components).then(fn=update_position, inputs=slider_inputs + [state_num_tracks], outputs=position_plot)
+
+    # 位置图
+    # 输入变化时更新
+    for ids, slider in enumerate(slider_inputs):
+        if ids % 6 in (0, 1):
+            slider.change(fn=update_position, inputs=slider_inputs + [state_num_tracks], outputs=position_plot)
+        else:
+            slider.release(fn=update_position, inputs=slider_inputs + [state_num_tracks], outputs=position_plot)
+    # 上传MIDI时更新
+    state_num_tracks.change(fn=update_position, inputs=slider_inputs + [state_num_tracks], outputs=position_plot)
+    # 页面加载时初始化
+    demo.load(fn=update_position, inputs=slider_inputs + [state_num_tracks], outputs=position_plot)
 
 
 if __name__ == "__main__":
