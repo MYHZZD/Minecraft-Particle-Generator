@@ -13,14 +13,6 @@ note_point = [80, 10, 0]  # 音符生成点,x值要大于start_delay
 structure_point = [20, 0, 0]  # 结构生成点
 pig_point = [0, 0, 0]  # 基准点
 
-# 玩家移动,结构生成,音符生成,三者同时开始
-# 音符动画用时
-summon_time = int((start_delay - inplace_distance) / player_speed)
-# 音符x方向移动距离
-summon_x = note_point[0] - start_delay
-# 轨道动画用时,音符盒入轨时正好动画结束
-structure_time = int((structure_point[0] - inplace_distance) / player_speed)
-
 # 注意方向替换,面朝太阳时,x轴是前后,z轴是左右。向前向右为正方向
 # 一切tick计算均包含起点和终点
 # 一切从距离到用时的折算都要考虑player speed
@@ -100,14 +92,16 @@ def move_note_entity(tag, pig_offset_x, pig_offset_y, pig_offset_z, target_x, ta
 
 
 # 激活音符盒 考虑player speed
-def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre, mainy=0, mode="note"):
+def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre, mainy=0, mode="note", ifodd=False):
     if loctag in ("mainright", "mainleft"):
         power_delay = 0
     elif loctag == "left":
         power_delay = 1
     elif loctag == "right":
         power_delay = 2
-    if abs(mainy) > 48:
+    if abs(mainy) > 48:  # 判断是否有旋律轨
+        power_delay -= 1
+    if ifodd:  # 输入时延迟了1t，现在提前1t激活
         power_delay -= 1
     if mode == "note":
         # 在time时刻放下的音符盒,在距离(start_delay)/速度=时间后激活。power delay是定值
@@ -231,6 +225,23 @@ def create_cross_note():  # speed 0.5时主旋律的判断
 
 
 def gen(midievent, result, max_tick):
+    global player_speed, start_delay, inplace_distance, note_point, structure_point
+    player_speed = float(result[-1]["运动速度"])  # 玩家每tick前进距离
+    start_delay = int(result[-1]["激活距离"])  # 从开始到第一个音符播放的距离
+    inplace_distance = int(result[-1]["激活延迟"])  # 音符入轨距离与激活距离之差
+    note_point = [int(p.strip()) for p in str(result[-1]["音符生成点"]).split(",") if p.strip()]  # 音符生成点,x值要大于start_delay
+    structure_point = [int(p.strip()) for p in str(result[-1]["结构生成点"]).split(",") if p.strip()]  # 结构生成点
+
+    note_only = bool(result[-1]["纯音符模式"])
+
+    # 玩家移动,结构生成,音符生成,三者同时开始
+    # 音符动画用时
+    summon_time = int((start_delay - inplace_distance) / player_speed)
+    # 音符x方向移动距离
+    summon_x = note_point[0] - start_delay
+    # 轨道动画用时,音符盒入轨时正好动画结束
+    structure_time = int((structure_point[0] - inplace_distance) / player_speed)
+
     mcfunction = [[] for _ in range(max_tick + 3 + pos2time(start_delay))]  # 时间
 
     # 骑猪tp,猪为原点
@@ -257,6 +268,8 @@ def gen(midievent, result, max_tick):
             effect_mode = result[note_track_id]["特效模式"]
             adsr = result[note_track_id]["ADSR"]
             envelope_mode = result[note_track_id]["包络模式"]
+            grass_block = "grass_block"
+            dirt = "dirt"
 
             note_track_id += 1  # 非空轨道,解决mido提取到空轨的问题
 
@@ -334,7 +347,7 @@ def gen(midievent, result, max_tick):
 
                     # 单独标记开始时间为奇数tick的音符
                     if k % 2 != 0:
-                        k = k - 1
+                        k = k + 1  # 量化到后1tick
                         ifodd = True
                     else:
                         ifodd = False
@@ -348,10 +361,10 @@ def gen(midievent, result, max_tick):
                                 if track_mode in (0, 2, 3):  # 基础对称轨 左右分轨
                                     if track_mode in (0, 3):  # 基础对称轨 右分轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "right"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy)  # 传参mainy,应对无旋律轨的延迟
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy, ifodd)  # 传参mainy,应对无旋律轨的延迟
                                     if track_mode in (0, 2):  # 基础对称轨 左分轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "left"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy)
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy, ifodd)
                                 # 标记该位置为已生成 x方向：[垫块,包络]。+ start_delay的意义是在k+dur时刻生成的音符会落在前方start_delay处,这里的start delay是距离量,不需要折算
                                 have_note[time2pos(k) + time2pos(dur) + start_delay] = [timbre_list[note_event["channel"]].split()[1], adsr_n[int(dur / 2)]]
                                 # 旋律
@@ -359,10 +372,10 @@ def gen(midievent, result, max_tick):
                                     if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨和左右分轨 纯旋律轨
                                         # 默认创建右侧或者居中旋律轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainright"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainright", note_pitch, note_instrument)
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainright", note_pitch, note_instrument, ifodd)
                                     if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 如果是两条轨,且不是左右分轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainleft"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainleft", note_pitch, note_instrument)
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainleft", note_pitch, note_instrument, ifodd)
                                     # 标记该位置为已生成
                                     have_note_main[time2pos(k) + time2pos(dur) + start_delay] = timbre_list[note_event["channel"]].split()[1]
 
@@ -454,141 +467,143 @@ def gen(midievent, result, max_tick):
                 # 判断旋律轨是否存在,存在则左右delay延迟为12,不存在则左右delay延迟为01
                 has_main = "hasmain" if (track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48) else "nomain"
 
-                # 轨道生成
-                for struc_tick, _ in enumerate(mcfunction):
-                    if struc_tick <= max_tick + pos2time(start_delay - structure_point[0]):  # 最后一个方块生成
-                        # 根据距离匹配
-                        bottom_block = have_note.get(time2pos(struc_tick) + structure_point[0], ["grass_block", 0] if struc_tick % 2 != 0 else ["dirt", 0])  # 如果有音获取[垫块,包络],没有音根据是否2的倍数选垫块
-                        bottom_block_main = have_note_main.get(time2pos(struc_tick) + structure_point[0], "grass_block" if struc_tick % 2 != 0 else "dirt")  # 垫块
-                        spawn_top = (struc_tick % 2 == 0) and (time2pos(struc_tick) + structure_point[0] not in have_note) or (struc_tick % 2 == 0) and bottom_block[1] != 0  # 不存在音或者包络不为零
-                        spawn_top_main = (struc_tick % 2 == 0) and (time2pos(struc_tick) + structure_point[0] not in have_note_main)
+                if not note_only:
+                    # 轨道生成
+                    for struc_tick, _ in enumerate(mcfunction):
+                        if struc_tick <= max_tick + pos2time(start_delay - structure_point[0]):  # 最后一个方块生成
+                            # 根据距离匹配
+                            bottom_block = have_note.get(time2pos(struc_tick) + structure_point[0], [grass_block, 0] if struc_tick % 2 != 0 else [dirt, 0])  # 如果有音获取[垫块,包络],没有音根据是否2的倍数选垫块
+                            bottom_block_main = have_note_main.get(time2pos(struc_tick) + structure_point[0], grass_block if struc_tick % 2 != 0 else dirt)  # 垫块
+                            spawn_top = (struc_tick % 2 == 0) and (time2pos(struc_tick) + structure_point[0] not in have_note) or (struc_tick % 2 == 0) and bottom_block[1] != 0  # 不存在音或者包络不为零
+                            spawn_top_main = (struc_tick % 2 == 0) and (time2pos(struc_tick) + structure_point[0] not in have_note_main)
 
-                        offset_x_delay = offset_y_delay = offset_z_delay = offset_x_main = offset_z_main = 0
+                            offset_x_delay = offset_y_delay = offset_z_delay = offset_x_main = offset_z_main = 0
 
-                        if player_speed == 0.5:
-                            # 根据有无包络计算delay xyz偏移。旋律x取无包络模式,z取交叉模式
-                            # 非包络偏移 (余数 -> (x, z))
-                            offsets = {0: (0, 0), 1: (0.5, 1), 2: (1, 2), 3: (0.5, 0)}  # x: 0 0.5 1 1.5 -> 0 0 0 1
-                            offset_x_delay, offset_z_delay = offsets[struc_tick % 4]
-                            offset_x_main = offset_x_delay  # 旋律轨一直是无包络模式,先赋值
-                            # 包络偏移
-                            if envelope_mode != "NONE":
-                                env_offsets = {0: (0, -1, 0), 1: (1.5, 2, 0), 2: (1, 2, 0), 3: (0.5, -1, 0)}  # x: 0 0.5 1 1.5 -> 0 -1 0 1
-                                offset_x_delay, offset_y_delay, offset_z_delay = env_offsets[struc_tick % 4]
-                            # 主旋律 Z 交叉
-                            if struc_tick % 4 == 1:
-                                pos = time2pos(struc_tick + 1) + structure_point[0]
-                                if pos in have_note_main:
-                                    offset_z_main = cross_note(1, mainx, False)
-                                else:
-                                    offset_z_main = 100
-                            elif struc_tick % 4 == 2:
-                                pos = time2pos(struc_tick) + structure_point[0]
-                                if pos in have_note_main:
-                                    offset_z_main = cross_note(2, mainx, True)
-                                else:
-                                    offset_z_main = 100
+                            if player_speed == 0.5:
+                                # 根据有无包络计算delay xyz偏移。旋律x取无包络模式,z取交叉模式
+                                # 非包络偏移 (余数 -> (x, z))
+                                offsets = {0: (0, 0), 1: (0.5, 1), 2: (1, 2), 3: (0.5, 0)}  # x: 0 0.5 1 1.5 -> 0 0 0 1
+                                offset_x_delay, offset_z_delay = offsets[struc_tick % 4]
+                                offset_x_main = offset_x_delay  # 旋律轨一直是无包络模式,先赋值
+                                # 包络偏移
+                                if envelope_mode != "NONE":
+                                    env_offsets = {0: (0, -1, 0), 1: (1.5, 2, 0), 2: (1, 2, 0), 3: (0.5, -1, 0)}  # x: 0 0.5 1 1.5 -> 0 -1 0 1
+                                    offset_x_delay, offset_y_delay, offset_z_delay = env_offsets[struc_tick % 4]
+                                # 主旋律 Z 交叉
+                                if struc_tick % 4 == 1:
+                                    pos = time2pos(struc_tick + 1) + structure_point[0]
+                                    if pos in have_note_main:
+                                        offset_z_main = cross_note(1, mainx, False)
+                                    else:
+                                        offset_z_main = 100
+                                elif struc_tick % 4 == 2:
+                                    pos = time2pos(struc_tick) + structure_point[0]
+                                    if pos in have_note_main:
+                                        offset_z_main = cross_note(2, mainx, True)
+                                    else:
+                                        offset_z_main = 100
 
-                        ox = structure_point[0] - offset_x_delay
-                        oxm = structure_point[0] - offset_x_main
-                        oy = track_y + offset_y_delay
-                        oz = track_x + offset_z_delay
-                        ozm = mainx + offset_z_main
+                            ox = structure_point[0] - offset_x_delay
+                            oxm = structure_point[0] - offset_x_main
+                            oy = track_y + offset_y_delay
+                            oz = track_x + offset_z_delay
+                            ozm = mainx + offset_z_main
 
-                        if track_mode in (0, 3):  # 基础对称轨 右分轨
-                            if bottom_block[1] == 0:  # 没有音或者包络为0
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, bottom_block[0], i, struc_tick, "right", has_main))
-                            else:  # 包络不为0,一定有音
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, "dirt", i, struc_tick, "right", has_main))  # 轨道上生成土块
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz + bottom_block[1], bottom_block[0], i, struc_tick, "right", has_main))  # 偏移生成垫块
-                                adsr_branch(ox, oy - 1, oz, "grass_block", i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络分支
-                                adsr_branch(ox, oy, oz, "redstone_wire", i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络红石线
-                            if spawn_top:  # 上层,避让音符盒
-                                mcfunction[struc_tick].append(summon_structure(ox, oy, oz, "grass_block", i, struc_tick, "right", has_main))
-                        if track_mode in (0, 2):  # 基础对称轨 左分轨
-                            if bottom_block[1] == 0:
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, bottom_block[0], i, struc_tick, "left", has_main))
-                            else:
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, "dirt", i, struc_tick, "left", has_main))
-                                mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz - bottom_block[1], bottom_block[0], i, struc_tick, "left", has_main))
-                                adsr_branch(ox, oy - 1, -oz, "grass_block", i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
-                                adsr_branch(ox, oy, -oz, "redstone_wire", i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
-                            if spawn_top:
-                                mcfunction[struc_tick].append(summon_structure(ox, oy, -oz, "grass_block", i, struc_tick, "left", has_main))
-                        if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
-                            mcfunction[struc_tick].append(summon_structure(oxm, mainy - 1, ozm, bottom_block_main, i, struc_tick, "mainright"))
-                            if spawn_top_main:
-                                mcfunction[struc_tick].append(summon_structure(oxm, mainy, ozm, "grass_block", i, struc_tick, "mainright"))
-                        if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
-                            mcfunction[struc_tick].append(summon_structure(oxm, mainy - 1, -ozm, bottom_block_main, i, struc_tick, "mainleft"))
-                            if spawn_top_main:
-                                mcfunction[struc_tick].append(summon_structure(oxm, mainy, -ozm, "grass_block", i, struc_tick, "mainleft"))
-
-                cross_note = create_cross_note()  # 重置
-
-                # 中继器生成
-                for struc_tick, _ in enumerate(mcfunction):
-                    if struc_tick <= max_tick + pos2time(start_delay - structure_point[0]):
-                        delay, facing, ox, oy, oz, oxm, ozm, facingm = (1, "ahead", 0, 0, 0, 0, 0, "ahead")
-                        if player_speed == 0.5:
-                            # 与轨道一样的流程,先计算无包络模式,给旋律轨x赋值。再计算有包络模式,根据情况给delay xyz赋值。最后根据交叉计算旋律z
-                            delay = 2
-                            env_offsets = {0: (0, 0, 0, "side"), 1: (0.5, 0, 1, "side"), 2: (0, 0, 0, "side"), 3: (0.5, 0, 0, "ahead")}  # x: 0 0.5 1 1.5 -> 0 0 0 1
-                            oxm, _, _, facingm = env_offsets[struc_tick % 4]  # 先赋值旋律轨X和中继器方向
-                            if envelope_mode != "NONE":
-                                env_offsets = {0: (0, 0, 0, "side"), 1: (1.5, 2, 0, "ahead"), 2: (0, 0, 0, "side"), 3: (0.5, -1, 0, "ahead")}  # x: 0 0.5 1 1.5 -> 0 -1 0 1
-                            ox, oy, oz, facing = env_offsets[struc_tick % 4]
-                            if struc_tick % 4 == 1:  # 下一个是分叉
-                                pos = time2pos(struc_tick + 1) + structure_point[0]
-                                if pos in have_note_main:
-                                    ozm = cross_note(1, mainx, True)
-                                else:
-                                    ozm = 100
-
-                        if struc_tick % 2 != 0:  # 与音符错开
                             if track_mode in (0, 3):  # 基础对称轨 右分轨
-                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, track_x + oz, delay, facing, i, struc_tick, "right", has_main))
+                                if bottom_block[1] == 0:  # 没有音或者包络为0
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, bottom_block[0], i, struc_tick, "right", has_main))
+                                else:  # 包络不为0,一定有音
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, dirt, i, struc_tick, "right", has_main))  # 轨道上生成土块
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz + bottom_block[1], bottom_block[0], i, struc_tick, "right", has_main))  # 偏移生成垫块
+                                    adsr_branch(ox, oy - 1, oz, grass_block, i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络分支
+                                    adsr_branch(ox, oy, oz, "redstone_wire", i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络红石线
+                                if spawn_top:  # 上层,避让音符盒
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy, oz, grass_block, i, struc_tick, "right", has_main))
                             if track_mode in (0, 2):  # 基础对称轨 左分轨
-                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, -track_x - oz, delay, facing, i, struc_tick, "left", has_main))
+                                if bottom_block[1] == 0:
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, bottom_block[0], i, struc_tick, "left", has_main))
+                                else:
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, dirt, i, struc_tick, "left", has_main))
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz - bottom_block[1], bottom_block[0], i, struc_tick, "left", has_main))
+                                    adsr_branch(ox, oy - 1, -oz, grass_block, i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
+                                    adsr_branch(ox, oy, -oz, "redstone_wire", i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
+                                if spawn_top:
+                                    mcfunction[struc_tick].append(summon_structure(ox, oy, -oz, grass_block, i, struc_tick, "left", has_main))
                             if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
-                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - oxm, mainy, mainx + ozm, delay, facingm, i, struc_tick, "main"))
+                                mcfunction[struc_tick].append(summon_structure(oxm, mainy - 1, ozm, bottom_block_main, i, struc_tick, "mainright"))
+                                if spawn_top_main:
+                                    mcfunction[struc_tick].append(summon_structure(oxm, mainy, ozm, grass_block, i, struc_tick, "mainright"))
                             if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
-                                mcfunction[struc_tick].append(summon_repeater(structure_point[0] - oxm, mainy, -mainx - ozm, delay, facingm, i, struc_tick, "main"))
+                                mcfunction[struc_tick].append(summon_structure(oxm, mainy - 1, -ozm, bottom_block_main, i, struc_tick, "mainleft"))
+                                if spawn_top_main:
+                                    mcfunction[struc_tick].append(summon_structure(oxm, mainy, -ozm, grass_block, i, struc_tick, "mainleft"))
 
-    # 激活中继器和红石线,音符盒有自己的音高和音色,难以统一
-    for power_tick, _ in enumerate(mcfunction):
-        if power_tick <= max_tick + pos2time(start_delay - structure_point[0]):
-            if power_tick % 2 != 0:  # 中继器 和音符交叉
-                mcfunction[power_tick + pos2time(structure_point[0])].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=main] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
-                )
-                mcfunction[power_tick + pos2time(structure_point[0]) + 2].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
-                )
-                mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
-                )
-                # 无旋律轨延迟减一
-                mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
-                )
-                mcfunction[power_tick + pos2time(structure_point[0]) + 0].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
-                )
-            if power_tick % 2 == 0:  # 红石线 和音符同步
-                mcfunction[power_tick + pos2time(structure_point[0]) + 2].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
-                )
-                mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
-                )
-                # 无旋律轨延迟减一
-                mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
-                )
-                mcfunction[power_tick + pos2time(structure_point[0]) + 0].append(
-                    f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
-                )
+                    cross_note = create_cross_note()  # 重置
+
+                    # 中继器生成
+                    for struc_tick, _ in enumerate(mcfunction):
+                        if struc_tick <= max_tick + pos2time(start_delay - structure_point[0]):
+                            delay, facing, ox, oy, oz, oxm, ozm, facingm = (1, "ahead", 0, 0, 0, 0, 0, "ahead")
+                            if player_speed == 0.5:
+                                # 与轨道一样的流程,先计算无包络模式,给旋律轨x赋值。再计算有包络模式,根据情况给delay xyz赋值。最后根据交叉计算旋律z
+                                delay = 2
+                                env_offsets = {0: (0, 0, 0, "side"), 1: (0.5, 0, 1, "side"), 2: (0, 0, 0, "side"), 3: (0.5, 0, 0, "ahead")}  # x: 0 0.5 1 1.5 -> 0 0 0 1
+                                oxm, _, _, facingm = env_offsets[struc_tick % 4]  # 先赋值旋律轨X和中继器方向
+                                if envelope_mode != "NONE":
+                                    env_offsets = {0: (0, 0, 0, "side"), 1: (1.5, 2, 0, "ahead"), 2: (0, 0, 0, "side"), 3: (0.5, -1, 0, "ahead")}  # x: 0 0.5 1 1.5 -> 0 -1 0 1
+                                ox, oy, oz, facing = env_offsets[struc_tick % 4]
+                                if struc_tick % 4 == 1:  # 下一个是分叉
+                                    pos = time2pos(struc_tick + 1) + structure_point[0]
+                                    if pos in have_note_main:
+                                        ozm = cross_note(1, mainx, True)
+                                    else:
+                                        ozm = 100
+
+                            if struc_tick % 2 != 0:  # 与音符错开
+                                if track_mode in (0, 3):  # 基础对称轨 右分轨
+                                    mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, track_x + oz, delay, facing, i, struc_tick, "right", has_main))
+                                if track_mode in (0, 2):  # 基础对称轨 左分轨
+                                    mcfunction[struc_tick].append(summon_repeater(structure_point[0] - ox, track_y + oy, -track_x - oz, delay, facing, i, struc_tick, "left", has_main))
+                                if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
+                                    mcfunction[struc_tick].append(summon_repeater(structure_point[0] - oxm, mainy, mainx + ozm, delay, facingm, i, struc_tick, "main"))
+                                if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
+                                    mcfunction[struc_tick].append(summon_repeater(structure_point[0] - oxm, mainy, -mainx - ozm, delay, facingm, i, struc_tick, "main"))
+
+    if not note_only:
+        # 激活中继器和红石线,音符盒有自己的音高和音色,难以统一
+        for power_tick, _ in enumerate(mcfunction):
+            if power_tick <= max_tick + pos2time(start_delay - structure_point[0]):
+                if power_tick % 2 != 0:  # 中继器 和音符交叉
+                    mcfunction[power_tick + pos2time(structure_point[0])].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=main] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    )
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 2].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    )
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    )
+                    # 无旋律轨延迟减一
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=right,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    )
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 0].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=repeater,tag=left,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
+                    )
+                if power_tick % 2 == 0:  # 红石线 和音符同步
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 2].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                    )
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left,tag=hasmain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                    )
+                    # 无旋律轨延迟减一
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 1].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=right,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                    )
+                    mcfunction[power_tick + pos2time(structure_point[0]) + 0].append(
+                        f'execute as @e[type=minecraft:block_display,tag=summontick{power_tick},tag=redstonewire,tag=left,tag=nomain] run data merge entity @s {{block_state:{{Properties:{{power:"15"}}}}}}'
+                    )
 
     for allfuncid, allfunc in enumerate(mcfunction):
         allfunc.append(f"execute as @e[type=minecraft:block_display,tag=pig] at @s run tp @s ~{player_speed} ~ ~")  # tp

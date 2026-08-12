@@ -128,6 +128,19 @@ def process_midi_file(midi_file_path):
     }
 
 
+def get_track_name(midi_file_path):
+    midi_file = MidiFile(midi_file_path)
+    track_names = []
+    for track in midi_file.tracks:
+        name = ""
+        for msg in track:
+            if msg.type == "track_name":
+                name = msg.name
+                break
+        track_names.append(name)
+    return track_names
+
+
 def mcmappings(result, ticks_per_beats):
     def tick_mappings(tick, mapping_times):
         remainder = int(tick % mapping_times)

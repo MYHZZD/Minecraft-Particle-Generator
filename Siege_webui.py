@@ -9,6 +9,7 @@ import zipfile
 import tempfile
 import io
 import math
+import colorsys
 import siegedata
 import siegefunc
 import extrafunction
@@ -19,10 +20,34 @@ from functools import lru_cache
 
 MAX_TRACKS = siegedata.MAX_TRACKS
 GM_PROGRAM_NAMES = siegedata.GM_PROGRAM_NAMES
-MC_PROGRAM_NAMES = siegedata.MC_PROGRAM_NAMES
+MC_PROGRAM_NAMES = siegedata.MC_PROGRAM_NAMES + siegedata.MC_EXTRA_PROGRAM_NAMES
+
+
+def rgb_to_hex(r, g, b):
+    return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+
+
+def generate_optimal_colors(n, saturation=0.85, lightness=0.55):
+    colors = []
+    total_points = 2 * n  # 精细网格总数
+    step_angle = 360 / total_points  # 基础步长 (180/n)
+    jump = n - 1  # 跳跃步数
+
+    for i in range(n):
+        # 计算在精细网格上的索引，并取模
+        idx = (i * jump) % total_points
+        hue_deg = idx * step_angle
+
+        # HSL 转 RGB（这里使用 hls_to_rgb，注意参数顺序是 H, L, S）
+        r, g, b = colorsys.hls_to_rgb(hue_deg / 360.0, lightness, saturation)
+        colors.append(rgb_to_hex(r, g, b))
+
+    return colors
+
 
 # 16 种高对比度颜色
-channel_colors = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999", "#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f", "#e5c494"]
+# channel_colors = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33", "#a65628", "#f781bf", "#999999", "#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f", "#e5c494"]
+channel_colors = generate_optimal_colors(MAX_TRACKS)
 
 
 def midi_to_note_name(midi_note, use_flats=False):
@@ -56,13 +81,26 @@ def recommend_range(low, high):
     pitch_all = [6, 18, 30, 42, 54, 66, 78, 90, 102, 114, 126]  # pitch_all[0]对应F#-1,因此角标要-1输出
     minleft = binary_search_insert_pos(low, pitch_all)
     maxright = binary_search_insert_pos(high, pitch_all)
-    return f"F#{minleft-2}-F#{maxright-1}"
+    if maxright - minleft <= 2:
+        check = "√"
+    else:
+        check = "X"
+    return f"F#{minleft-2}-F#{maxright-1} {check}"
 
 
 def parse_midi(file_path):
     try:
         midi_data = extrafunction.process_midi_file(file_path)
+        track_names = extrafunction.get_track_name(file_path)
         tracks = midi_data["tracks"]
+
+        def has_overlap(notes):
+            """检测同一轨道内是否有音符时间重叠"""
+            sorted_notes = sorted(notes, key=lambda x: x["start_tick"])
+            for i in range(len(sorted_notes) - 1):
+                if sorted_notes[i]["end_tick"] > sorted_notes[i + 1]["start_tick"]:
+                    return True
+            return False
 
         rows = []
         track_serial = 0  # 只统计有音符的轨道
@@ -73,6 +111,12 @@ def parse_midi(file_path):
                 continue
             track_serial += 1
 
+            # 获取原始轨道索引，并取出对应的名称
+            orig_idx = track["index"]
+            track_name = track_names[orig_idx] if orig_idx < len(track_names) else "未命名"
+            if not track_name.strip():
+                track_name = "Default"
+
             # 按通道统计
             channel_notes = {}  # channel -> list of pitches
             for note_event in notes:
@@ -81,6 +125,7 @@ def parse_midi(file_path):
                 channel_notes.setdefault(ch, []).append(pitch)
 
             total_notes = len(notes)
+            polyphony = has_overlap(notes)
 
             # 准备各列的多通道拼接字符串
             ch_parts = []  # 通道组成
@@ -107,11 +152,13 @@ def parse_midi(file_path):
             rows.append(
                 {
                     "轨道索引": track_serial - 1,
+                    "轨道名称": track_name,
                     "通道组成": "; ".join(ch_parts),
                     "音符数量": total_notes,
                     "最小音高": "; ".join(min_parts),
                     "最大音高": "; ".join(max_parts),
                     "推荐音域": "; ".join(range_parts),
+                    "是否有复音": polyphony,
                 }
             )
 
@@ -138,53 +185,63 @@ def on_file_upload(file):
     return [df] + group_updates + title_updates
 
 
-def generate(file, num_tracks, *args):
-    results = []
+def build_results(num_tracks, *args):
+    """从UI参数构建配置数据，返回轨道列表 + 全局字典"""
+    tracks = []
     for i in range(num_tracks):
-        base = i * 18  # 18个参数,修改别忘了config load
-        X = int(args[base])
-        Y = int(args[base + 1])
-        mode = int(args[base + 2])
-        effect_mode = int(args[base + 3])
-        melodyX = int(args[base + 4])
-        melodyY = int(args[base + 5])
-        timbre1 = str(args[base + 6])
-        timbre2 = str(args[base + 7])
-        timbre3 = str(args[base + 8])
-        timbre4 = str(args[base + 9])
+        base = i * 18
         attack = int(args[base + 10])
         decay = int(args[base + 11])
         sustain = int(args[base + 12])
         release = int(args[base + 13])
         decay_curve = float(args[base + 14])
         release_curve = float(args[base + 15])
-        envelope_mode = str(args[base + 16])
-        particle_file = str(args[base + 17]) if args[base + 17] else ""
 
         # 实时计算包络数组
         _, _, adsr_curve = generate_envelope(attack, decay, sustain, release, decay_curve, release_curve)
 
-        results.append(
+        tracks.append(
             {
                 "轨道索引": i,
-                "X": X,
-                "Y": Y,
-                "结构模式": mode,
-                "特效模式": effect_mode,
-                "旋律X": melodyX,
-                "旋律Y": melodyY,
-                "音色1": timbre1,
-                "音色2": timbre2,
-                "音色3": timbre3,
-                "音色4": timbre4,
+                "X": int(args[base]),
+                "Y": int(args[base + 1]),
+                "结构模式": int(args[base + 2]),
+                "特效模式": int(args[base + 3]),
+                "旋律X": int(args[base + 4]),
+                "旋律Y": int(args[base + 5]),
+                "音色1": str(args[base + 6]),
+                "音色2": str(args[base + 7]),
+                "音色3": str(args[base + 8]),
+                "音色4": str(args[base + 9]),
                 "ADSR": list(adsr_curve),
-                "包络模式": envelope_mode,
-                "粒子特效": particle_file,
-                "ADSR_params": {"attack": attack, "decay": decay, "sustain": sustain, "release": release, "decay_curve": decay_curve, "release_curve": release_curve},
+                "包络模式": str(args[base + 16]),
+                "粒子特效": str(args[base + 17]) if args[base + 17] else "",
+                "ADSR_params": {
+                    "attack": attack,
+                    "decay": decay,
+                    "sustain": sustain,
+                    "release": release,
+                    "decay_curve": decay_curve,
+                    "release_curve": release_curve,
+                },
             }
         )
+    global_data = {
+        "纯音符模式": bool(args[-6]),
+        "运动速度": float(args[-5]),
+        "音符生成点": str(args[-4]),
+        "结构生成点": str(args[-3]),
+        "激活距离": int(args[-2]),
+        "激活延迟": int(args[-1]),
+    }
+    return tracks, global_data
 
-    midievent, max_tick = extrafunction.mcmappings(extrafunction.process_midi_file(file), 8)
+
+def generate(file, num_tracks, *args):
+    tracks, global_data = build_results(num_tracks, *args)
+    results = tracks + [global_data]
+
+    midievent, max_tick = extrafunction.mcmappings(extrafunction.process_midi_file(file), 8)  # 8为一拍的tick数，4rt8gt
     mcfunction = siegefunc.gen(midievent, results, max_tick)
 
     mcmeta = json.dumps({"pack": {"pack_format": 1, "description": "hello\nby MYHZZD"}}, indent=2, ensure_ascii=False)
@@ -211,6 +268,17 @@ def generate(file, num_tracks, *args):
         f.write(zip_buffer.getvalue())
 
     return temp_path
+
+
+def download_config(num_tracks, *args):
+    if num_tracks == 0:
+        raise gr.Error("没有轨道，无法生成配置")
+    tracks, global_data = build_results(num_tracks, *args)
+    results = tracks + [global_data]
+    config_json = json.dumps(results, indent=2, ensure_ascii=False)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        f.write(config_json)
+        return f.name
 
 
 # ADSR相关
@@ -312,10 +380,18 @@ def load_config(file):  # 加载配置
     with open(file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    num_config = len(data)
+    # 分离轨道和全局（最后一项如果是全局字典，则取出）
+    if len(data) > 0 and isinstance(data[-1], dict) and "纯音符模式" in data[-1]:
+        tracks = data[:-1]
+        global_data = data[-1]
+    else:
+        tracks = data
+        global_data = {}  # 无全局参数时用默认
+    num_tracks = len(tracks)
+
     updates = []
     for i in range(MAX_TRACKS):
-        if i < num_config:
+        if i < num_tracks:
             cfg = data[i]
             track_updates = [
                 gr.update(value=cfg.get("X", 22)),
@@ -341,6 +417,16 @@ def load_config(file):  # 加载配置
             # config中不存在的轨道,保持当前状态
             track_updates = [gr.update() for _ in range(18)]  # 每个轨道18个控件
         updates.extend(track_updates)
+    # 更新全局控件（6 个）
+    global_updates = [
+        gr.update(value=global_data.get("纯音符模式", False)),
+        gr.update(value=global_data.get("运动速度", 1.0)),
+        gr.update(value=global_data.get("音符生成点", "80,10,0")),
+        gr.update(value=global_data.get("结构生成点", "20,0,0")),
+        gr.update(value=global_data.get("激活距离", 40)),
+        gr.update(value=global_data.get("激活延迟", 3)),
+    ]
+    updates.extend(global_updates)
 
     return updates
 
@@ -476,7 +562,7 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
     # gr.Markdown("# 🎵 MIDI 轨道配置")
 
     upload = gr.UploadButton(label="🎵 上传 MIDI 文件", file_types=[".mid", ".midi"], type="filepath")
-    info_df = gr.DataFrame(label="轨道基础信息", interactive=False, datatype=["number", "html", "number", "html", "html", "html"], max_height="20vh")
+    info_df = gr.DataFrame(label="轨道基础信息", interactive=False, datatype=["number", "str", "html", "number", "html", "html", "html", "bool"], max_height="20vh")
 
     state_num_tracks = gr.Number(value=0, visible=False)
 
@@ -499,13 +585,13 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
                         y_s = gr.Slider(label="DELAY Y", minimum=-48, maximum=48, step=1, value=dynamic_y)  # delay轨上下位置
                         mainx_s = gr.Slider(label="旋律 X", minimum=-2, maximum=2, step=1, value=0)  # 旋律轨左右距离
                         mainy_s = gr.Slider(label="旋律 Y", minimum=-50, maximum=50, step=1, value=dynamic_y)  # 旋律轨上下位置 ±48外不生成
-                        timbre1_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色1", value=MC_PROGRAM_NAMES[10])
+                        timbre1_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色1", value=MC_PROGRAM_NAMES[10], allow_custom_value=True)
                     with gr.Accordion("高级选项", open=False):
                         with gr.Row(scale=0, equal_height="true"):
                             envelope_r = gr.Radio(choices=["NONE", "ADSR", "CC"], label="包络模式", value="NONE")
-                            timbre2_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色2", value=MC_PROGRAM_NAMES[0])
-                            timbre3_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色3", value=MC_PROGRAM_NAMES[0])
-                            timbre4_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色4", value=MC_PROGRAM_NAMES[0])
+                            timbre2_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色2", value=MC_PROGRAM_NAMES[0], allow_custom_value=True)
+                            timbre3_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色3", value=MC_PROGRAM_NAMES[0], allow_custom_value=True)
+                            timbre4_d = gr.Dropdown(choices=MC_PROGRAM_NAMES, label="音色4", value=MC_PROGRAM_NAMES[0], allow_custom_value=True)
                             particle_f = gr.UploadButton(label="上传特效配置", file_types=[".json", ".mcfunction"], type="filepath")
                         with gr.Accordion("ADSR设置", open=False):
                             with gr.Row():
@@ -542,14 +628,25 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
             position_plot = gr.Plot(visible=False)
 
     with gr.Row():
+        note_b = gr.Radio(choices=[True, False], label="纯音符模式", value=False)
+        speed_r = gr.Radio(choices=[1, 0.5], label="运动速度", value=1)
+        note_t = gr.Textbox(label="音符生成点", value="80,10,0")
+        structure_t = gr.Textbox(label="结构生成点", value="20,0,0")
+        start_n = gr.Number(label="激活距离", value=40)
+        inplace_n = gr.Number(label="激活延迟", value=3)
+    all_components.extend([note_b, speed_r, note_t, structure_t, start_n, inplace_n])
+
+    with gr.Row():
         config_upload = gr.UploadButton(label="上传 config.json", file_types=[".json"], type="filepath")
         generate_btn = gr.Button("生成", variant="primary")
+        config_download_btn = gr.Button("下载 config.json")
     download_zip = gr.File(label="📦 下载 ZIP 文件", interactive=False)
 
     # 上传文件后更新
     upload.change(fn=on_file_upload, inputs=upload, outputs=[info_df] + track_groups + track_titles).then(fn=lambda df: len(df), inputs=info_df, outputs=state_num_tracks)
 
     # 生成按钮
+    config_download_btn.click(fn=download_config, inputs=[state_num_tracks] + all_components, outputs=download_zip)
     generate_btn.click(fn=generate, inputs=[upload] + [state_num_tracks] + all_components, outputs=download_zip)
 
     # 加载配置 更新位置图
