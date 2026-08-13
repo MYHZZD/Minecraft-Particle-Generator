@@ -26,17 +26,27 @@ def time2pos(time):
     return float(time * player_speed)
 
 
-def spiral(x, y, start, direction, total, tick):  # x y 起始相位 方向正负 总旋转角度 总时间
+def spiral(x, y, start, tick):  # x y 起始相位 方向正负 总旋转角度 总时间
     # 将度数转换为弧度
     start_rad = math.radians(start)
-    total_rad = math.radians(total)
-    target_angle = math.atan2(y, x)
+    target_rad = math.atan2(y, x) % (2 * math.pi)
 
-    # 沿着指定方向转到目标角度所需的角度 取模[0, 2π)
-    if direction == 1:  # 逆时针
-        delta = (target_angle - start_rad) % (2 * math.pi)
-    else:  # 顺时针
-        delta = (start_rad - target_angle) % (2 * math.pi)
+    # 逆时针旋转角度（0~2π）
+    ccw = (target_rad - start_rad) % (2 * math.pi)
+    # 特殊处理：如果目标就是起始角度，逆时针转一整圈
+    if ccw == 0:
+        delta_rad = 2 * math.pi
+    else:
+        # 顺时针旋转角度（正数，表示顺时针旋转的弧度数）
+        cw = (2 * math.pi - ccw) % (2 * math.pi)  # 当ccw≠0时等价于 2π - ccw
+
+        # 选择旋转量更大的方向，相等时（即相差π）强制逆时针
+        if ccw > cw:
+            delta_rad = ccw  # 逆时针（正角度）
+        elif cw > ccw:
+            delta_rad = -cw  # 顺时针（负角度）
+        else:  # ccw == cw == π
+            delta_rad = ccw  # 逆时针
 
     R = math.hypot(x, y)  # 终点到原点的距离
     steps = tick - 1
@@ -45,7 +55,7 @@ def spiral(x, y, start, direction, total, tick):  # x y 起始相位 方向正�
     for i in range(tick):
         t = i / steps
         r = R * t  # 当前半径
-        angle_rad = start_rad + direction * (delta + total_rad) * t
+        angle_rad = start_rad + delta_rad * t
         px = r * math.cos(angle_rad)
         py = r * math.sin(angle_rad)
         points.append([px, py])
@@ -110,7 +120,7 @@ def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre, mainy=0, mod
         )
 
         # 声音比power快1tick,不知道为啥,先+1对齐
-        pitch_volume = math.pow(2, -(pitch - 12) / 12)
+        pitch_volume = math.pow(2, (pitch - 12) / 12)
         mcfunction[time + pos2time(start_delay) + power_delay + 1].append(
             f"execute at @e[type=minecraft:block_display,tag=summontick{time},tag={tag},tag={loctag}] run playsound minecraft:block.note_block.{timbre} master @p ~ ~ ~ 3 {pitch_volume:.8f}"
         )
@@ -125,7 +135,7 @@ def power_note_entity(mcfunction, time, tag, loctag, pitch, timbre, mainy=0, mod
             f'execute as @e[type=minecraft:block_display,tag=summontick{time},tag={tag},tag={loctag}] run data merge entity @s {{block_state:{{Properties:{{powered:"true"}}}}}}'
         )
 
-        pitch_volume = math.pow(2, -(pitch - 12) / 12)
+        pitch_volume = math.pow(2, (pitch - 12) / 12)
         mcfunction[time + pos2time(structure_point[0]) + power_delay + 1].append(
             f"execute at @e[type=minecraft:block_display,tag=summontick{time},tag={tag},tag={loctag}] run playsound minecraft:block.note_block.{timbre} master @p ~ ~ ~ 3 {pitch_volume:.8f}"
         )
@@ -281,7 +291,7 @@ def gen(midievent, result, max_tick):
                 # delay音符盒生成轨迹,涉及从结构点到生成点的坐标变换 -note_point[1]
                 pos_x = linepath(-summon_x, summon_time)
                 if effect_mode == 0:  # 螺旋线
-                    pos_note = spiral(track_x, track_y - note_point[1], 0, 1, 360, summon_time)  # YOZ平面轨迹
+                    pos_note = spiral(track_x, track_y - note_point[1], 0, summon_time)  # YOZ平面轨迹
                     pos_note_3d = [[pos_x[pos_count], py, px] for pos_count, (px, py) in enumerate(pos_note)]
                 elif effect_mode == 1:  # 直线
                     pos_y = linepath(track_y - note_point[1], summon_time)
@@ -361,10 +371,10 @@ def gen(midievent, result, max_tick):
                                 if track_mode in (0, 2, 3):  # 基础对称轨 左右分轨
                                     if track_mode in (0, 3):  # 基础对称轨 右分轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "right"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy, ifodd)  # 传参mainy,应对无旋律轨的延迟
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy, "note", ifodd)  # 传参mainy,应对无旋律轨的延迟
                                     if track_mode in (0, 2):  # 基础对称轨 左分轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "left"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy, ifodd)
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy, "note", ifodd)
                                 # 标记该位置为已生成 x方向：[垫块,包络]。+ start_delay的意义是在k+dur时刻生成的音符会落在前方start_delay处,这里的start delay是距离量,不需要折算
                                 have_note[time2pos(k) + time2pos(dur) + start_delay] = [timbre_list[note_event["channel"]].split()[1], adsr_n[int(dur / 2)]]
                                 # 旋律
@@ -372,10 +382,10 @@ def gen(midievent, result, max_tick):
                                     if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨和左右分轨 纯旋律轨
                                         # 默认创建右侧或者居中旋律轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainright"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainright", note_pitch, note_instrument, ifodd)
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainright", note_pitch, note_instrument, mainy, "note", ifodd)
                                     if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 如果是两条轨,且不是左右分轨
                                         mcfunction[k + dur].append(summon_note_block(note_point[0], note_point[1], note_point[2], note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainleft"], k + dur))
-                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainleft", note_pitch, note_instrument, ifodd)
+                                        power_note_entity(mcfunction, k + dur, f"track{i}note{j}dur{dur}", "mainleft", note_pitch, note_instrument, mainy, "note", ifodd)
                                     # 标记该位置为已生成
                                     have_note_main[time2pos(k) + time2pos(dur) + start_delay] = timbre_list[note_event["channel"]].split()[1]
 
@@ -414,19 +424,20 @@ def gen(midievent, result, max_tick):
                                     if (k + dur) % 4 == 2:  # 分支 上层
                                         offset_y_delay = speed_z[move_dur + 1]  # -2 借用数值,和speedz物理意义无关
 
-                                if effect_mode != 99:
-                                    # delay
-                                    if track_mode in (0, 3):  # 基础对称轨 右分轨
-                                        mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "right"], ox, oy, oz, tx - offset_x, ty + offset_y_delay, tz + offset_z_delay))
-                                    if track_mode in (0, 2):  # 基础对称轨 左分轨
-                                        mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "left"], ox, oy, oz, tx - offset_x, ty + offset_y_delay, -tz - offset_z_delay))
+                                if not note_only or (note_only and move_dur == (summon_time - 1 - 1)):  # 纯音乐模式除了最后一刻隐藏
+                                    if effect_mode != 99:  # 特殊音符盒隐藏
+                                        # delay
+                                        if track_mode in (0, 3):  # 基础对称轨 右分轨
+                                            mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "right"], ox, oy, oz, tx - offset_x, ty + offset_y_delay, tz + offset_z_delay))
+                                        if track_mode in (0, 2):  # 基础对称轨 左分轨
+                                            mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "left"], ox, oy, oz, tx - offset_x, ty + offset_y_delay, -tz - offset_z_delay))
 
-                                    # 旋律
-                                    if dur == 0:
-                                        if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
-                                            mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "mainright"], ox, oy, oz, txm - offset_x, tym, tzm + offset_z_main))
-                                        if mainx != 0 and (track_mode == 1 or (track_mode == 0 and abs(mainy) <= 48)):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
-                                            mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "mainleft"], ox, oy, oz, txm - offset_x, tym, -tzm - offset_z_main))
+                                        # 旋律
+                                        if dur == 0:
+                                            if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨 纯旋律轨 左右分轨
+                                                mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "mainright"], ox, oy, oz, txm - offset_x, tym, tzm + offset_z_main))
+                                            if mainx != 0 and (track_mode == 1 or (track_mode == 0 and abs(mainy) <= 48)):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
+                                                mcfunction[k + 1 + dur + move_dur].append(move_note_entity([f"track{i}note{j}dur{dur}", "mainleft"], ox, oy, oz, txm - offset_x, tym, -tzm - offset_z_main))
 
                                 # 特殊音符盒生成
                                 if move_dur == summon_time - 1 - 1:  # 最后时刻。正常移动音符盒的终点,借用其坐标
@@ -441,21 +452,25 @@ def gen(midievent, result, max_tick):
                                         if track_mode in (0, 2, 3):  # 基础对称轨 左右分轨
                                             if track_mode in (0, 3):  # 基础对称轨 右分轨
                                                 mcfunction[k + dur + time_delta].append(summon_note_block(sox, soy, soz, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "right", "state0"], k + dur + time_delta))
-                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy, "stru")  # 传参mainy,应对无旋律轨的延迟
+                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "right", note_pitch, note_instrument, mainy, "stru", ifodd)  # 传参mainy,应对无旋律轨的延迟
                                             if track_mode in (0, 2):  # 基础对称轨 左分轨
-                                                mcfunction[k + dur + time_delta].append(summon_note_block(sox, soy, -soz, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "left"], k + dur + time_delta))
-                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy, "stru")
+                                                mcfunction[k + dur + time_delta].append(summon_note_block(sox, soy, -soz, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "left", "state0"], k + dur + time_delta))
+                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "left", note_pitch, note_instrument, mainy, "stru", ifodd)
                                         # 标记该位置为已生成 x方向：[垫块,包络]。+ start_delay的意义是在k+dur时刻生成的音符会落在前方start_delay处,这里的start delay是距离量,不需要折算
                                         have_note[time2pos(k) + time2pos(dur) + start_delay] = [timbre_list[note_event["channel"]].split()[1], adsr_n[int(dur / 2)]]
                                         # 旋律
                                         if dur == 0:  # 只在音头创建
                                             if track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48:  # 符合要求的基础对称轨和左右分轨 纯旋律轨
                                                 # 默认创建右侧或者居中旋律轨
-                                                mcfunction[k + dur + time_delta].append(summon_note_block(sox, soym, sozm, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainright"], k + dur + time_delta))
-                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "mainright", note_pitch, note_instrument, mainy, "stru")
+                                                mcfunction[k + dur + time_delta].append(
+                                                    summon_note_block(sox, soym, sozm, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainright", "state0"], k + dur + time_delta)
+                                                )
+                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "mainright", note_pitch, note_instrument, mainy, "stru", ifodd)
                                             if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 如果是两条轨,且不是左右分轨
-                                                mcfunction[k + dur + time_delta].append(summon_note_block(sox, soym, -sozm, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainleft"], k + dur + time_delta))
-                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "mainleft", note_pitch, note_instrument, mainy, "stru")
+                                                mcfunction[k + dur + time_delta].append(
+                                                    summon_note_block(sox, soym, -sozm, note_instrument, note_pitch, [f"track{i}note{j}dur{dur}", "mainleft", "state0"], k + dur + time_delta)
+                                                )
+                                                power_note_entity(mcfunction, k + dur + time_delta, f"track{i}note{j}dur{dur}", "mainleft", note_pitch, note_instrument, mainy, "stru", ifodd)
                                             # 标记该位置为已生成
                                             have_note_main[time2pos(k) + time2pos(dur) + start_delay] = timbre_list[note_event["channel"]].split()[1]
 
@@ -467,8 +482,7 @@ def gen(midievent, result, max_tick):
                 # 判断旋律轨是否存在,存在则左右delay延迟为12,不存在则左右delay延迟为01
                 has_main = "hasmain" if (track_mode == 1 or track_mode in (0, 2, 3) and abs(mainy) <= 48) else "nomain"
 
-                if not note_only:
-                    # 轨道生成
+                if not note_only:  # 轨道生成
                     for struc_tick, _ in enumerate(mcfunction):
                         if struc_tick <= max_tick + pos2time(start_delay - structure_point[0]):  # 最后一个方块生成
                             # 根据距离匹配
@@ -515,7 +529,7 @@ def gen(midievent, result, max_tick):
                                 else:  # 包络不为0,一定有音
                                     mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz, dirt, i, struc_tick, "right", has_main))  # 轨道上生成土块
                                     mcfunction[struc_tick].append(summon_structure(ox, oy - 1, oz + bottom_block[1], bottom_block[0], i, struc_tick, "right", has_main))  # 偏移生成垫块
-                                    adsr_branch(ox, oy - 1, oz, grass_block, i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络分支
+                                    # adsr_branch(ox, oy - 1, oz, grass_block, i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络分支
                                     adsr_branch(ox, oy, oz, "redstone_wire", i, struc_tick, "right", bottom_block[1], mcfunction, has_main)  # 生成包络红石线
                                 if spawn_top:  # 上层,避让音符盒
                                     mcfunction[struc_tick].append(summon_structure(ox, oy, oz, grass_block, i, struc_tick, "right", has_main))
@@ -525,7 +539,7 @@ def gen(midievent, result, max_tick):
                                 else:
                                     mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz, dirt, i, struc_tick, "left", has_main))
                                     mcfunction[struc_tick].append(summon_structure(ox, oy - 1, -oz - bottom_block[1], bottom_block[0], i, struc_tick, "left", has_main))
-                                    adsr_branch(ox, oy - 1, -oz, grass_block, i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
+                                    # adsr_branch(ox, oy - 1, -oz, grass_block, i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
                                     adsr_branch(ox, oy, -oz, "redstone_wire", i, struc_tick, "left", bottom_block[1], mcfunction, has_main)
                                 if spawn_top:
                                     mcfunction[struc_tick].append(summon_structure(ox, oy, -oz, grass_block, i, struc_tick, "left", has_main))
@@ -569,8 +583,7 @@ def gen(midievent, result, max_tick):
                                 if mainx != 0 and (track_mode == 1 or track_mode == 0 and abs(mainy) <= 48):  # 符合要求的基础对称轨 纯旋律轨 第二条轨
                                     mcfunction[struc_tick].append(summon_repeater(structure_point[0] - oxm, mainy, -mainx - ozm, delay, facingm, i, struc_tick, "main"))
 
-    if not note_only:
-        # 激活中继器和红石线,音符盒有自己的音高和音色,难以统一
+    if not note_only:  # 激活中继器和红石线,音符盒有自己的音高和音色,难以统一
         for power_tick, _ in enumerate(mcfunction):
             if power_tick <= max_tick + pos2time(start_delay - structure_point[0]):
                 if power_tick % 2 != 0:  # 中继器 和音符交叉

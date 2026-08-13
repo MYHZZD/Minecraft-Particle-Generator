@@ -27,7 +27,7 @@ def rgb_to_hex(r, g, b):
     return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
 
-def generate_optimal_colors(n, saturation=0.85, lightness=0.55):
+def generate_optimal_colors(n, saturation=0.85, lightness=0.55):  # 创建颜色
     colors = []
     total_points = 2 * n  # 精细网格总数
     step_angle = 360 / total_points  # 基础步长 (180/n)
@@ -50,7 +50,7 @@ def generate_optimal_colors(n, saturation=0.85, lightness=0.55):
 channel_colors = generate_optimal_colors(MAX_TRACKS)
 
 
-def midi_to_note_name(midi_note, use_flats=False):
+def midi_to_note_name(midi_note, use_flats=False):  # midi音高转化为音名
     """
     use_flats若为True使用降号表示,否则使用升号表示
     """
@@ -67,7 +67,7 @@ def midi_to_note_name(midi_note, use_flats=False):
     return f"{note_name}{octave}"
 
 
-def recommend_range(low, high):
+def recommend_range(low, high):  # 判断所属F#区间
     def binary_search_insert_pos(num, arr):  # 二分法查找
         left, right = 0, len(arr)
         while left < right:
@@ -81,14 +81,14 @@ def recommend_range(low, high):
     pitch_all = [6, 18, 30, 42, 54, 66, 78, 90, 102, 114, 126]  # pitch_all[0]对应F#-1,因此角标要-1输出
     minleft = binary_search_insert_pos(low, pitch_all)
     maxright = binary_search_insert_pos(high, pitch_all)
-    if maxright - minleft <= 2:
+    if maxright - minleft <= 1:
         check = "√"
     else:
         check = "X"
     return f"F#{minleft-2}-F#{maxright-1} {check}"
 
 
-def parse_midi(file_path):
+def parse_midi(file_path):  # 分析midi信息
     try:
         midi_data = extrafunction.process_midi_file(file_path)
         track_names = extrafunction.get_track_name(file_path)
@@ -185,7 +185,7 @@ def on_file_upload(file):
     return [df] + group_updates + title_updates
 
 
-def build_results(num_tracks, *args):
+def build_results(num_tracks, *args):  # 创建config
     """从UI参数构建配置数据，返回轨道列表 + 全局字典"""
     tracks = []
     for i in range(num_tracks):
@@ -535,7 +535,7 @@ def get_minecraft_circle(a):  # 生成 Bresenham 连续像素圆
     return points
 
 
-def update_position(*args):
+def update_position(*args):  # 更新位置图
     """
     参数：各轨道[mode_d, envelope_r, x_s, y_s, mainx_s, mainy_s] 最后一个state_num_tracks
     """
@@ -555,6 +555,17 @@ def update_position(*args):
         mys.append(slider_vals[base + 5])
     fig = draw_position_grid(moded, envelope_r, xs, ys, mxs, mys)
     return gr.update(value=fig, visible=True)
+
+
+def update_adsr_plot(attack, decay, sustain, release, decay_curve, release_curve, envelope_mode):  # ADSR绘图条件判定
+    """仅在包络模式为 ADSR 时绘图，否则不更新"""
+    if envelope_mode != "ADSR":
+        return gr.update()  # 保持原有图表不变
+    # 计算包络数组
+    xs, ys, yf = generate_envelope(attack, decay, sustain, release, decay_curve, release_curve)
+    # 绘制曲线
+    fig = plot_envelope(sustain, (xs, ys))
+    return fig
 
 
 # 构建界面
@@ -605,17 +616,17 @@ with gr.Blocks(title="MIDI 轨道参数", theme=gr.themes.Soft(), fill_width=Tru
                                 with gr.Column(scale=2):
                                     plot_output = gr.Plot(label="包络示意图")
 
-                            # 创建隐形容器暂存adsr列表
-                            state_adsr = gr.State()
+                            # 收集当前轨道的 ADSR 滑块
+                            adsr_sliders = [attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider]
+                            # 输入：6个滑块 + envelope_r
+                            inputs_for_adsr = adsr_sliders + [envelope_r]
 
-                            # 所有滑块绑定 release 事件,即时更新图表
-                            all_adsr_inputs = [attack_slider, decay_slider, sustain_slider, release_slider, decay_curve_slider, release_curve_slider]
+                            # 为每个滑块绑定 release 事件
+                            for slider in adsr_sliders:
+                                slider.release(fn=update_adsr_plot, inputs=inputs_for_adsr, outputs=plot_output)
 
-                            for slider in all_adsr_inputs:  # 先传参到state缓存,再输入图表
-                                slider.release(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
-
-                            # 页面加载时绘制默认曲线
-                            demo.load(fn=generate_envelope, inputs=all_adsr_inputs, outputs=state_adsr).then(fn=plot_envelope, inputs=[sustain_slider, state_adsr], outputs=plot_output)
+                            # 为包络模式单选钮绑定 change 事件（切换时立即刷新）
+                            envelope_r.change(fn=update_adsr_plot, inputs=inputs_for_adsr, outputs=plot_output)
 
                 track_groups.append(group)
                 track_titles.append(title_md)
