@@ -95,7 +95,7 @@ def summon_note_block(dx, dy, dz, instrument, note_pitch, tags, summon_tick):
 
 def move_note_entity(tag, pig_offset_x, pig_offset_y, pig_offset_z, target_x, target_y, target_z):
     return (
-        f"execute as @e[tag={tag[0]},tag={tag[1]}] at @e[type=minecraft:block_display,tag=pig] "
+        f"execute at @e[type=minecraft:block_display,tag=pig] as @e[tag={tag[0]},tag={tag[1]}] "
         f"positioned ~{pig_offset_x:.4f} ~{pig_offset_y:.4f} ~{pig_offset_z:.4f} "
         f"run tp @s ~{target_x:.4f} ~{target_y:.4f} ~{target_z:.4f}"
     )
@@ -627,5 +627,9 @@ def gen(midievent, result, max_tick):
 
     mcfunction[-1].append("ride @p dismount")
     mcfunction[-1].append("kill @e[tag=siege]")
+
+    # 把定位原点改为玩家，减少目标选择难度
+    mcfunction[1:] = [s.replace("@e[type=minecraft:block_display,tag=pig]", "@p positioned ~10 ~-2 ~-0.5") for s in mcfunction[1:]
+]
 
     return mcfunction
